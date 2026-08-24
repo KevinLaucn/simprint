@@ -36,7 +36,7 @@ Simprint is a local-first desktop workspace for browser-driven operations, desig
 
 It is intended for individuals and teams that need to maintain multiple browser work environments over time, including scenarios such as cross-border operations, account management, automated task execution, and shared resource coordination. With a unified desktop entry point, Simprint helps manage environment lifecycles more consistently, connect external resources, and build reusable workflows around daily operations.
 
-Core business data is stored on the local machine by default, and normal desktop use and development do not require a separately deployed Simprint Server.
+Core business data is stored on the local machine by default, and normal desktop use and development can be completed locally.
 
 ## Why Simprint?
 
@@ -79,13 +79,13 @@ cp src-tauri/config.example.toml src-tauri/config.development.toml
 cargo tauri dev --features development
 ```
 
-Starting the desktop application does not require a separately configured or running backend.
+Starting the desktop application does not require any separately configured or running services.
 
 ## Status
 
 Simprint was originally developed as a hosted commercial product and has since moved to a local-first open-source desktop architecture. The open-source edition is intended to provide all core functionality without feature gating.
 
-Some standalone server code, billing-related UI, upgrade prompts, or commercial entry points remain from the earlier architecture. Their presence does not mean that the desktop application requires a hosted service; these remnants will continue to be cleaned up over time.
+Some billing-related UI, upgrade prompts, or commercial entry points remain from the earlier architecture and will continue to be cleaned up over time.
 
 ## Roadmap
 

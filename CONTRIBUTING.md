@@ -41,9 +41,7 @@ pnpm dev
 
 The desktop application is local-first. Its business routes use the embedded SQLite layer in `src-tauri/crates/business`, and its environment runtime is embedded from `src-tauri/crates/runtime`. Starting the desktop application automatically initializes the local user, workspace, database, and runtime.
 
-Do not configure a remote `base_url`, PostgreSQL, or Redis for normal desktop development. Features that use Tauri commands, workspace resources, browser kernels, the Local API, or MCP should be tested through the desktop application rather than against the standalone `server/` project.
-
-The `server/` directory is retained from the earlier hosted architecture and is not part of the desktop application's default runtime path. Only start or modify it when your contribution explicitly targets that standalone component; keep such changes clearly separated from desktop work.
+Do not configure a remote `base_url`, PostgreSQL, or Redis for normal desktop development. Features that use Tauri commands, workspace resources, browser kernels, the Local API, or MCP should be tested through the desktop application.
 
 ## Useful Commands
 

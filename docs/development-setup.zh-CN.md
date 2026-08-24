@@ -4,19 +4,18 @@
 
 ## 1. 先了解项目结构
 
-桌面端由三部分组成，仓库中还保留一个不参与默认启动的遗留服务端组件：
+桌面端由以下部分组成：
 
-| 目录                        | 作用                                          | 是否是桌面端启动的必需项 |
-| --------------------------- | --------------------------------------------- | ------------------------ |
-| 根目录、`src`、`plugins`    | React、Vite、TypeScript、Slotkit 界面与插件   | 是                       |
-| `src-tauri`                 | Tauri 2、Rust 桌面外壳与本地服务              | 是                       |
-| `src-tauri/crates/business` | SQLite 业务模型、迁移和服务                   | 是                       |
-| `src-tauri/crates/runtime`  | 内嵌环境运行时和浏览器进程管理                | 是                       |
-| `server`                    | 早期在线架构保留的独立 Axum + PostgreSQL 服务 | 否                       |
+| 目录                        | 作用                                        | 是否是桌面端启动的必需项 |
+| --------------------------- | ------------------------------------------- | ------------------------ |
+| 根目录、`src`、`plugins`    | React、Vite、TypeScript、Slotkit 界面与插件 | 是                       |
+| `src-tauri`                 | Tauri 2、Rust 桌面外壳与本地服务            | 是                       |
+| `src-tauri/crates/business` | SQLite 业务模型、迁移和服务                 | 是                       |
+| `src-tauri/crates/runtime`  | 内嵌环境运行时和浏览器进程管理              | 是                       |
 
 桌面端当前是 local-first 架构：前端通过 Tauri `invoke` 调用本地 Rust 服务，业务请求进入内嵌的 SQLite 业务层，环境运行时与主程序同进程运行。首次启动会自动创建本地用户、默认工作区、数据库和迁移表结构。
 
-普通桌面端开发不需要启动 `server`，也不需要 PostgreSQL、Redis、远程 API 或 `base_url`。只有明确维护遗留独立服务端时，才需要单独进入 `server/` 按该目录的说明操作。
+普通桌面端开发不需要 PostgreSQL、Redis、远程 API 或 `base_url`。
 
 ## 2. 安装 Windows 前置环境
 
@@ -226,12 +225,6 @@ pnpm --version
 
 不需要。当前桌面端的业务路由由 `src-tauri` 的本地 SQLite 业务层处理，开发启动不读取 `base_url`，也不要求本机存在 PostgreSQL 或 Redis。
 
-### 为什么仓库中还有 `server` 目录？
-
-它是早期在线架构保留的独立组件，用于历史代码维护和迁移参考，不会被 `cargo tauri dev` 编译或启动。桌面端功能不应为了复用该目录而重新引入远程 API 依赖。
-
-如果贡献内容明确针对 `server/`，请把它作为独立工程验证，并在 Pull Request 中说明变更不属于桌面端默认运行链路。
-
 ### 浏览器内核下载或安装失败
 
 先确认网络能够访问内核下载地址，并查看 `%LOCALAPPDATA%\Simprint\logs` 中的应用日志。Windows 杀毒软件或文件索引程序有时会短暂占用刚解压的内核文件；关闭相关浏览器环境后重试，通常不需要清理 SQLite 数据库。
@@ -251,5 +244,3 @@ cargo tauri dev --features development
 Set-Location D:\code\rust\simprint
 pnpm dev
 ```
-
-维护遗留 `server/` 组件时，请在单独的终端和独立数据库中运行，不要把它加入普通桌面端的启动脚本。

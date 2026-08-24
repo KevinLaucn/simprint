@@ -75,7 +75,7 @@ Simprint is being built to take a different direction: an open, programmable bro
 
 ```bash
 pnpm install --frozen-lockfile
-cargo tauri dev --features development
+cargo tauri dev
 ```
 
 Starting the desktop application does not require any separately configured or running services.

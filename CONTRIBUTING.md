@@ -27,7 +27,7 @@ From the repository root:
 
 ```bash
 pnpm install
-cargo tauri dev --features development
+cargo tauri dev
 ```
 
 If you only need frontend iteration, you can also use:

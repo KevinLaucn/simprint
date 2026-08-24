@@ -77,7 +77,7 @@ Simprint 想走另一条路线：构建一个开放、可编排、可编程的�
 
 ```powershell
 pnpm install --frozen-lockfile
-cargo tauri dev --features development
+cargo tauri dev
 ```
 
 启动桌面端无需预先配置或运行额外服务。

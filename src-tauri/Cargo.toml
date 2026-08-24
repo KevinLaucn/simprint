@@ -105,6 +105,4 @@ unsafe_code = "warn"
 all = "warn"
 
 [features]
-development = ["runtime/development"]
-production = ["tauri/custom-protocol"]
-test = []
+production = ["tauri/custom-protocol", "runtime/production"]

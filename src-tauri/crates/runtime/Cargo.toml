@@ -7,7 +7,7 @@ license = "AGPL-3.0-only"
 autobins = false
 
 [features]
-development = []
+production = []
 
 [lib]
 name = "runtime"

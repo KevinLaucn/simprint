@@ -103,7 +103,7 @@ cargo tauri --version
 ## 6. 启动桌面端
 
 ```powershell
-cargo tauri dev --features development
+cargo tauri dev
 ```
 
 启动过程会自动完成以下工作：
@@ -221,7 +221,7 @@ pnpm --version
 
 ```powershell
 Set-Location D:\code\rust\simprint
-cargo tauri dev --features development
+cargo tauri dev
 ```
 
 前端页面开发：

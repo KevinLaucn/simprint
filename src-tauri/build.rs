@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::path::Path;
 
 use serde::Deserialize;
 
@@ -17,11 +16,8 @@ fn main() {
     validate_selected_tauri_config(&webview_mode);
     println!("cargo:rustc-env=SIMPRINT_WEBVIEW_MODE={webview_mode}");
 
-    // 1. 构建 Tauri 应用（处理 Windows manifest / 权限等）
+    // 构建 Tauri 应用（处理 Windows manifest / 权限等）
     tauri_build_pipeline::build_tauri();
-
-    // 2. 为前端构建写入环境标记文件（.build-env）
-    frontend_env::prepare_frontend_build_env();
 }
 
 #[derive(Deserialize)]
@@ -120,61 +116,6 @@ fn fixed_runtime_directory_for_target_arch() -> &'static str {
         Ok("x86") => "Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.x86",
         Ok(arch) => panic!("unsupported Windows target architecture '{arch}' for fixed-runtime"),
         Err(err) => panic!("CARGO_CFG_TARGET_ARCH is unavailable: {err}"),
-    }
-}
-
-// =============================================================================
-// 构建环境推导（供多个子模块复用）
-// =============================================================================
-
-/// 根据启用的 Cargo feature 推导出构建环境名
-///
-/// - 若启用 `test` feature -> "test"
-/// - 若启用 `development` feature -> "development"
-/// - 若启用 `production` feature 或未启用任何环境特性 -> "production"
-pub(crate) fn detect_build_env_name() -> &'static str {
-    if cfg!(feature = "test") {
-        "test"
-    } else if cfg!(feature = "development") {
-        "development"
-    } else {
-        "production"
-    }
-}
-
-// =============================================================================
-// 前端构建环境标记（.build-env）
-// =============================================================================
-
-mod frontend_env {
-    use super::*;
-
-    /// 准备前端构建所需的环境标记文件
-    pub fn prepare_frontend_build_env() {
-        // 根据当前启用的 feature，推导出前端构建使用的环境名称
-        let env_name = detect_build_env_name();
-        write_frontend_env_hint(env_name);
-    }
-
-    /// 将推导出的构建环境名写到前端目录，供前端构建脚本读取
-    fn write_frontend_env_hint(env_name: &str) {
-        // 前端在 .. 目录下
-        let hint_path = Path::new("..").join(".build-env");
-
-        if let Some(parent) = hint_path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                eprintln!(
-                    "[BUILD WARNING] Failed to create parent directory for '{}': {}",
-                    hint_path.display(),
-                    e
-                );
-            }
-        }
-
-        if let Err(e) = fs::write(&hint_path, env_name.as_bytes()) {
-            // 失败不会中断构建，但会输出一条提示，前端将退回到默认 production
-            println!("cargo:warning=failed to write frontend build env hint: {e}");
-        }
     }
 }
 

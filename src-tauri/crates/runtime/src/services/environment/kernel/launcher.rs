@@ -15,7 +15,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "development")]
+#[cfg(not(feature = "production"))]
 const DEVELOPMENT_BROWSER_ARGS: [&str; 1] = ["--no-sandbox"];
 use tokio::process::Child;
 
@@ -380,7 +380,7 @@ async fn spawn_browser_process(
         args.push("--v=1".to_string());
     }
 
-    #[cfg(feature = "development")]
+    #[cfg(not(feature = "production"))]
     args.extend(DEVELOPMENT_BROWSER_ARGS.iter().map(|arg| (*arg).to_string()));
 
     if let Some(id) = display_id {
@@ -537,7 +537,7 @@ mod policy_tests {
         read_browser_log_tail, validate_browser_runtime_layout, windows_policy_error_message,
     };
 
-    #[cfg(feature = "development")]
+    #[cfg(not(feature = "production"))]
     #[test]
     fn development_launch_disables_chromium_sandbox_for_restricted_windows_hosts() {
         assert!(super::DEVELOPMENT_BROWSER_ARGS

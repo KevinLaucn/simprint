@@ -46,7 +46,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare production build
+      - name: Validate release secrets
         shell: powershell
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
@@ -59,7 +59,49 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY is required"
           }
 
-          Copy-Item "src-tauri/config.example.toml" "src-tauri/config.production.toml" -Force
+      - name: Download fixed WebView2 runtimes
+        shell: powershell
+        run: |
+          $destination = Join-Path $PWD "src-tauri/webview-fixed"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+
+          $runtimes = @(
+            @{
+              Name = "x64"
+              Url = "https://pub-39307a5e69c74324855a762027cbf9bf.r2.dev/webview-fixed-x64.zip"
+              Directory = "Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.x64"
+            },
+            @{
+              Name = "arm64"
+              Url = "https://pub-39307a5e69c74324855a762027cbf9bf.r2.dev/webview-fixed-arm64.zip"
+              Directory = "Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.arm64"
+            },
+            @{
+              Name = "x86"
+              Url = "https://pub-39307a5e69c74324855a762027cbf9bf.r2.dev/webview-fixed-x86.zip"
+              Directory = "Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.x86"
+            }
+          )
+
+          foreach ($runtime in $runtimes) {
+            $archive = Join-Path $env:RUNNER_TEMP "webview-fixed-$($runtime.Name).zip"
+            $extractDirectory = Join-Path $env:RUNNER_TEMP "webview-fixed-$($runtime.Name)"
+
+            Invoke-WebRequest -Uri $runtime.Url -OutFile $archive
+            Expand-Archive -LiteralPath $archive -DestinationPath $extractDirectory -Force
+
+            $sourceDirectory = Join-Path $extractDirectory "webview-fixed"
+            if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
+              $sourceDirectory = $extractDirectory
+            }
+
+            Get-ChildItem -LiteralPath $sourceDirectory | Copy-Item -Destination $destination -Recurse -Force
+
+            $runtimeDirectory = Join-Path $destination $runtime.Directory
+            if (-not (Test-Path -LiteralPath $runtimeDirectory -PathType Container)) {
+              throw "Downloaded archive does not contain $($runtime.Directory)"
+            }
+          }
 
       - name: Prepare x64 fixed-runtime config
         env:

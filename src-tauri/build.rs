@@ -1,8 +1,7 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use config::Config;
 use serde::Deserialize;
 
 // =============================================================================
@@ -18,18 +17,10 @@ fn main() {
     validate_selected_tauri_config(&webview_mode);
     println!("cargo:rustc-env=SIMPRINT_WEBVIEW_MODE={webview_mode}");
 
-    // 1. 仅在生产环境下下载 / 准备 webview-fixed 目录中的资源
-    #[cfg(feature = "production")]
-    {
-        if webview_mode == "fixed-runtime" {
-            webview_assets::ensure_webview_fixed_downloaded();
-        }
-    }
-
-    // 2. 构建 Tauri 应用（处理 Windows manifest / 权限等）
+    // 1. 构建 Tauri 应用（处理 Windows manifest / 权限等）
     tauri_build_pipeline::build_tauri();
 
-    // 3. 为前端构建写入环境标记文件（.build-env）
+    // 2. 为前端构建写入环境标记文件（.build-env）
     frontend_env::prepare_frontend_build_env();
 }
 
@@ -141,12 +132,6 @@ fn fixed_runtime_directory_for_target_arch() -> &'static str {
 /// - 若启用 `test` feature -> "test"
 /// - 若启用 `development` feature -> "development"
 /// - 若启用 `production` feature 或未启用任何环境特性 -> "production"
-///
-/// 根据启用的 Cargo feature 推导出构建环境名
-///
-/// - 若启用 `test` feature -> "test"
-/// - 若启用 `development` feature -> "development"
-/// - 若启用 `production` feature 或未启用任何环境特性 -> "production"
 pub(crate) fn detect_build_env_name() -> &'static str {
     if cfg!(feature = "test") {
         "test"
@@ -157,191 +142,8 @@ pub(crate) fn detect_build_env_name() -> &'static str {
     }
 }
 
-/// 根据当前构建环境返回对应的配置文件名
-pub(crate) fn current_config_file_name() -> &'static str {
-    match detect_build_env_name() {
-        "test" => "config.test.toml",
-        "development" => "config.development.toml",
-        _ => "config.production.toml",
-    }
-}
-
 // =============================================================================
-// 模块一：Webview 资源下载与解压
-// =============================================================================
-
-mod webview_assets {
-    use super::*;
-
-    /// Webview 配置结构体（用于 build.rs 中解析）
-    #[derive(Deserialize)]
-    struct WebviewConfig {
-        x86_64_download_url: String,
-        aarch64_download_url: String,
-        x86_download_url: String,
-    }
-
-    struct TargetWebview {
-        download_url: String,
-        runtime_directory: &'static str,
-    }
-
-    /// 确保 `webview-fixed` 目录已经从远端 ZIP 包解压完成
-    ///
-    /// - 若当前目标架构的运行时目录已存在，则直接跳过
-    /// - 否则从该架构的 URL 下载 zip，并解压到共享的 `webview-fixed/`
-    pub fn ensure_webview_fixed_downloaded() {
-        println!(
-            "cargo:rerun-if-changed={}",
-            super::current_config_file_name()
-        );
-        let target_dir = Path::new("webview-fixed");
-
-        // 优先尝试从当前环境的配置文件中读取下载地址
-        let target_webview = detect_target_webview().unwrap_or_else(|| {
-            panic!(
-                "[BUILD ERROR] Failed to detect the target WebView runtime from config file '{}'.\n\
-                 Please ensure [webview] contains download URLs for x86_64, aarch64 and x86.",
-                super::current_config_file_name()
-            );
-        });
-
-        // 三种架构的运行时可以共存；仅当当前目标架构的目录已存在时才跳过下载。
-        if target_dir.join(target_webview.runtime_directory).exists() {
-            return;
-        }
-
-        if let Err(err) = download_and_extract_webview_fixed(
-            &target_webview.download_url,
-            target_dir.to_path_buf(),
-        ) {
-            // 构建脚本失败时直接 panic，阻止继续构建，以避免产生不完整的产物
-            panic!("failed to download and extract webview-fixed assets: {err}");
-        }
-
-        if !target_dir.join(target_webview.runtime_directory).exists() {
-            panic!(
-                "downloaded WebView archive does not contain expected runtime directory '{}'",
-                target_webview.runtime_directory
-            );
-        }
-    }
-
-    /// 从当前构建目标和 `config.<env>.toml` 中选择对应的 WebView 固定运行时。
-    ///
-    /// 使用 config crate 进行 TOML 解析，替代手动字符串解析，提高可靠性和可维护性。
-    /// 解析失败时返回 `None`，由调用方决定是否回退到默认值。
-    fn detect_target_webview() -> Option<TargetWebview> {
-        let config_file_name = super::current_config_file_name();
-
-        // 使用 config crate 解析 TOML 文件
-        let config = Config::builder()
-            .add_source(config::File::with_name(config_file_name))
-            .build()
-            .map_err(|e| {
-                eprintln!(
-                    "[BUILD ERROR] Failed to load config file '{}': {}",
-                    config_file_name, e
-                );
-                e
-            })
-            .ok()?;
-
-        // 尝试获取 webview 配置段
-        let webview_config: WebviewConfig = config
-            .get("webview")
-            .map_err(|e| {
-                eprintln!(
-                    "[BUILD ERROR] Failed to parse [webview] section in '{}': {}",
-                    config_file_name, e
-                );
-                e
-            })
-            .ok()?;
-
-        match env::var("CARGO_CFG_TARGET_ARCH").ok()?.as_str() {
-            "x86_64" => Some(TargetWebview {
-                download_url: webview_config.x86_64_download_url,
-                runtime_directory: super::fixed_runtime_directory_for_target_arch(),
-            }),
-            "aarch64" => Some(TargetWebview {
-                download_url: webview_config.aarch64_download_url,
-                runtime_directory: super::fixed_runtime_directory_for_target_arch(),
-            }),
-            "x86" => Some(TargetWebview {
-                download_url: webview_config.x86_download_url,
-                runtime_directory: super::fixed_runtime_directory_for_target_arch(),
-            }),
-            arch => {
-                eprintln!("[BUILD ERROR] Unsupported Windows target architecture: {arch}");
-                None
-            }
-        }
-    }
-
-    /// 从远程下载 webview-fixed.zip 并解压到指定目录
-    fn download_and_extract_webview_fixed(
-        url: &str,
-        target_dir: PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use std::fs::File;
-        use std::io::{self, Cursor};
-
-        // 确保目标目录存在
-        if !target_dir.exists() {
-            fs::create_dir_all(&target_dir)?;
-        }
-
-        println!(
-            "cargo:warning=Downloading webview-fixed assets from {}",
-            url
-        );
-
-        // 使用 blocking 客户端下载 ZIP 文件（build.rs 不能是 async）
-        let response = reqwest::blocking::get(url)?;
-        if !response.status().is_success() {
-            return Err(format!("download failed, status: {}", response.status()).into());
-        }
-
-        let mut bytes: Vec<u8> = Vec::new();
-        let mut reader = response;
-        reader.copy_to(&mut bytes)?;
-
-        // 使用 zip crate 解压缩
-        let cursor = Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor)?;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let file_name = file.name();
-
-            // 大多数发布包会在 ZIP 内部自带一层 `webview-fixed/` 根目录。
-            // 为避免解压后出现 `webview-fixed/webview-fixed/...` 的双层目录，
-            // 这里如果发现路径以 `webview-fixed/` 开头，就去掉这一级目录。
-            let relative_name = file_name.strip_prefix("webview-fixed/").unwrap_or(file_name);
-
-            let mut out_path = target_dir.clone();
-            out_path.push(relative_name);
-
-            if file_name.ends_with('/') || relative_name.is_empty() {
-                // 目录条目
-                fs::create_dir_all(&out_path)?;
-            } else {
-                if let Some(parent) = out_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                let mut outfile = File::create(&out_path)?;
-                io::copy(&mut file, &mut outfile)?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-// =============================================================================
-// 模块三：前端构建环境标记（.build-env）
+// 前端构建环境标记（.build-env）
 // =============================================================================
 
 mod frontend_env {
@@ -377,7 +179,7 @@ mod frontend_env {
 }
 
 // =============================================================================
-// 模块四：Tauri 应用构建（Windows manifest / 权限等）
+// Tauri 应用构建（Windows manifest / 权限等）
 // =============================================================================
 
 mod tauri_build_pipeline {

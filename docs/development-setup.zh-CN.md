@@ -100,21 +100,7 @@ cargo tauri --version
 
 安装过程可能较慢，因为 Cargo 需要编译 CLI 本身。`cargo tauri --version` 能输出版本，才继续下一步。
 
-## 6. 创建桌面端开发配置
-
-复制示例配置：
-
-```powershell
-Copy-Item `
-  .\src-tauri\config.example.toml `
-  .\src-tauri\config.development.toml
-```
-
-仓库的开发启动约定要求从示例复制该文件；当前内容是固定版本 WebView 下载地址。它不包含远程 API 地址，也不需要填写数据库连接信息。
-
-`config.development.toml` 已被 `.gitignore` 忽略，不要把真实环境地址、密钥或个人路径提交到仓库。
-
-## 7. 启动桌面端
+## 6. 启动桌面端
 
 ```powershell
 cargo tauri dev --features development
@@ -140,7 +126,7 @@ pnpm dev
 
 但依赖 Tauri `invoke`、本地 SQLite、浏览器内核或系统窗口的功能，在纯 Vite 页面中不能完整工作。
 
-## 8. 本地运行时与数据目录
+## 7. 本地运行时与数据目录
 
 Windows 正式运行时的默认根目录是：
 
@@ -172,7 +158,7 @@ Windows 正式运行时的默认根目录是：
 
 这些网络访问不等同于把本地工作区数据托管到 Simprint 社区服务器。
 
-## 9. 启动成功后的检查
+## 8. 启动成功后的检查
 
 完成桌面端启动后，至少确认：
 
@@ -190,7 +176,7 @@ pnpm rust:fmt:check
 pnpm rust:check
 ```
 
-## 10. 常见问题
+## 9. 常见问题
 
 ### `cargo tauri` 不是有效命令
 
@@ -229,7 +215,7 @@ pnpm --version
 
 先确认网络能够访问内核下载地址，并查看 `%LOCALAPPDATA%\Simprint\logs` 中的应用日志。Windows 杀毒软件或文件索引程序有时会短暂占用刚解压的内核文件；关闭相关浏览器环境后重试，通常不需要清理 SQLite 数据库。
 
-## 11. 推荐的日常启动顺序
+## 10. 推荐的日常启动顺序
 
 普通桌面端开发：
 

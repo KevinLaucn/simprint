@@ -77,7 +77,6 @@ Simprint 想走另一条路线：构建一个开放、可编排、可编程的�
 
 ```powershell
 pnpm install --frozen-lockfile
-Copy-Item .\src-tauri\config.example.toml .\src-tauri\config.development.toml
 cargo tauri dev --features development
 ```
 

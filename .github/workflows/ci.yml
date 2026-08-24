@@ -50,11 +50,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare app config
-        shell: powershell
-        run: |
-          Copy-Item "src-tauri/config.example.toml" "src-tauri/config.production.toml" -Force
-
       - name: Build frontend
         run: node build.cjs
 

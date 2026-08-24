@@ -6,11 +6,5 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
-# Local app configs
-/config.development.toml
-/config.production.toml
-/config.test.toml
-!/config.example.toml
-
 # Downloaded runtime resources
 /resources/

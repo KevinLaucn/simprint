@@ -27,7 +27,6 @@ From the repository root:
 
 ```bash
 pnpm install
-cp src-tauri/config.example.toml src-tauri/config.development.toml
 cargo tauri dev --features development
 ```
 

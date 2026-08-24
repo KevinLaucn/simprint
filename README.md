@@ -75,7 +75,6 @@ Simprint is being built to take a different direction: an open, programmable bro
 
 ```bash
 pnpm install --frozen-lockfile
-cp src-tauri/config.example.toml src-tauri/config.development.toml
 cargo tauri dev --features development
 ```
 

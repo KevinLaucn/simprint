@@ -12,7 +12,7 @@ This repository is in an active open-source transition. We welcome bug reports, 
 
 ## Development Setup
 
-Windows 从零配置、桌面端启动和可选服务端联调请先阅读 [开发配置文档](./docs/development-setup.zh-CN.md)。
+Windows 从零配置、桌面端启动和本地数据目录说明请先阅读 [开发配置文档](./docs/development-setup.zh-CN.md)。
 
 ### Prerequisites
 
@@ -37,13 +37,13 @@ If you only need frontend iteration, you can also use:
 pnpm dev
 ```
 
-### Local Backend
+### Local Runtime and Data
 
-Many contributions do not require a local backend. Documentation updates, CI changes, build fixes, and part of the frontend and desktop-shell work can usually be developed without running the full server stack locally.
+The desktop application is local-first. Its business routes use the embedded SQLite layer in `src-tauri/crates/business`, and its environment runtime is embedded from `src-tauri/crates/runtime`. Starting the desktop application automatically initializes the local user, workspace, database, and runtime.
 
-If your change touches server-backed flows, workspace resources, or API-dependent behavior, you may also need a self-hosted backend during development.
+Do not configure a remote `base_url`, PostgreSQL, or Redis for normal desktop development. Features that use Tauri commands, workspace resources, browser kernels, the Local API, or MCP should be tested through the desktop application rather than against the standalone `server/` project.
 
-The desktop application currently handles its main business routes through the embedded SQLite business layer. Only features that explicitly use the standalone HTTP server need the server-side setup described in the development guide.
+The `server/` directory is retained from the earlier hosted architecture and is not part of the desktop application's default runtime path. Only start or modify it when your contribution explicitly targets that standalone component; keep such changes clearly separated from desktop work.
 
 ## Useful Commands
 

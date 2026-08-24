@@ -32,9 +32,11 @@
 
 ## Introduction
 
-Simprint 是一个面向浏览器业务场景的桌面工作台，用于在同一入口中集中组织浏览器配置、代理资源、自动化流程以及本地运行能力。
+Simprint 是一个 local-first 的浏览器桌面工作台，用于在同一入口中集中组织浏览器配置、代理资源、自动化流程以及本地运行能力。
 
 它适合需要长期维护多套浏览器工作环境的个人与团队，例如跨境业务、账号运营、自动化任务执行以及资源协同管理等场景。通过统一的桌面入口，Simprint 可以更稳定地管理环境生命周期、连接外部资源，并围绕日常操作建立可复用的工作流。
+
+核心业务数据默认保存在本机，日常使用和桌面端开发无需额外部署 Simprint 服务端。
 
 ## Why Simprint?
 
@@ -66,42 +68,37 @@ Simprint 想走另一条路线：构建一个开放、可编排、可编程的�
 
 ### Prerequisites
 
-- Node.js 20+
-- `pnpm`
+- Node.js 20
+- `pnpm` 9
 - Rust toolchain
 - 目标平台所需的 Tauri 系统依赖
 
-### 一键安装自托管服务端
-
-Linux 服务器可直接执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Simprint/simprint/main/deploy/install-server.sh | bash # 请修改客户端的配置， 如: base_url = http://127.0.0.1:40041/api/
-```
-
 ### Run locally
 
-```bash
-pnpm install
-cp src-tauri/config.example.toml src-tauri/config.development.toml
+```powershell
+pnpm install --frozen-lockfile
+Copy-Item .\src-tauri\config.example.toml .\src-tauri\config.development.toml
 cargo tauri dev --features development
 ```
+
+启动桌面端无需预先配置或运行独立服务端。
+
 ## Status
 
-Simprint 最初按照商业产品路线进行开发，目前正在逐步过渡为开源项目，当前开放的开源版本将以不做功能阉割的方式提供完整的核心能力。
+Simprint 最初按照在线商业产品路线开发，目前已经迁移为 local-first 的开源桌面应用。当前开放版本将以不做功能阉割的方式提供完整的核心能力。
 
-产品中仍可能出现部分计费相关界面、升级提示或商业化入口，这些内容属于此前商业模式遗留的界面元素，后续会逐步清理并移除；相关功能本身将继续向社区版本开放。
+仓库中仍保留部分早期服务端代码、计费界面、升级提示或商业化入口。这些内容不代表桌面端依赖线上服务，将在后续版本中继续整理和移除。
 
 ## Roadmap
 
 - **AI workflows**：扩展 AI 辅助工作流与面向代理任务的执行能力。
-- **Private deployment**：已完成，自托管和企业私有化部署支持现已可用。
+- **Local-first hardening**：继续完善本地数据迁移、备份恢复和离线可用性。
 - **Fingerprint research**：持续推进浏览器环境控制、兼容性与指纹方向研究。
 - **Automation SDK**：提供更可复用的自动化构建与集成接口。
 
 ## Data Use
 
-大多数开源版本用户会依赖社区托管的服务，因此相关数据可能会存储在社区管理的服务器上。社区不会主动向第三方披露用户数据，但每位用户仍需自行判断数据风险，并尽量避免提交敏感信息。
+Simprint 的核心业务数据默认保存在用户设备上。浏览器内核下载、应用更新、代理和外部网站等需要联网的功能，仍会访问相应的第三方服务。
 
 ## Contributing
 

@@ -32,9 +32,11 @@
 
 ## Introduction
 
-Simprint is a desktop workspace for browser-driven operations, designed to organize browser profiles, proxy resources, automation flows, and local runtime capabilities in one place.
+Simprint is a local-first desktop workspace for browser-driven operations, designed to organize browser profiles, proxy resources, automation flows, and local runtime capabilities in one place.
 
 It is intended for individuals and teams that need to maintain multiple browser work environments over time, including scenarios such as cross-border operations, account management, automated task execution, and shared resource coordination. With a unified desktop entry point, Simprint helps manage environment lifecycles more consistently, connect external resources, and build reusable workflows around daily operations.
+
+Core business data is stored on the local machine by default, and normal desktop use and development do not require a separately deployed Simprint Server.
 
 ## Why Simprint?
 
@@ -64,43 +66,37 @@ Simprint is being built to take a different direction: an open, programmable bro
 
 ### Prerequisites
 
-- Node.js 20+
-- `pnpm`
+- Node.js 20
+- `pnpm` 9
 - Rust toolchain
 - Tauri system prerequisites for your platform
-
-### One-line self-hosted server install
-
-Linux servers can bootstrap the self-hosted backend with:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Simprint/simprint/main/deploy/install-server.sh | bash # Update the client config afterwards, for example: base_url = http://127.0.0.1:40041/api/
-```
 
 ### Run locally
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 cp src-tauri/config.example.toml src-tauri/config.development.toml
 cargo tauri dev --features development
 ```
 
+Starting the desktop application does not require a separately configured or running backend.
+
 ## Status
 
-Simprint was originally developed as a commercial product. It is now being transitioned into an open-source project, and the current open-source edition is intended to provide all core functionality without feature gating.
+Simprint was originally developed as a hosted commercial product and has since moved to a local-first open-source desktop architecture. The open-source edition is intended to provide all core functionality without feature gating.
 
-Some billing-related UI, upgrade prompts, or commercial entry points may still appear in the product as remnants of the previous commercial model. These interfaces are being phased out and will be removed over time, while the related functionality will remain openly available in the community edition.
+Some standalone server code, billing-related UI, upgrade prompts, or commercial entry points remain from the earlier architecture. Their presence does not mean that the desktop application requires a hosted service; these remnants will continue to be cleaned up over time.
 
 ## Roadmap
 
 - **AI workflows**: Expand AI-assisted operational flows and agent-oriented task orchestration.
-- **Private deployment**: Completed. Self-hosted and enterprise-controlled deployment support is now available.
+- **Local-first hardening**: Improve local data migration, backup and restore, and offline behavior.
 - **Fingerprint research**: Continue refining browser environment controls, compatibility, and research depth.
 - **Automation SDK**: Provide a more reusable interface for building and integrating automation capabilities.
 
 ## Data Use
 
-Most users of the open-source edition will rely on community-hosted services, and related data may therefore be stored on community-managed servers. The community does not proactively disclose user data to third parties, but each user remains responsible for assessing their own data risk and should avoid submitting sensitive information whenever possible.
+Simprint stores its core business data on the user's device by default. Features that require network access, such as browser-kernel downloads, application updates, proxies, and external websites, still connect to the relevant third-party services.
 
 ## Contributing
 

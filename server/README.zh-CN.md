@@ -1,11 +1,10 @@
 <div align="center">
   <h1>Simprint Server</h1>
-  <p>面向 Simprint 工作区、账号体系、环境管理、代理资源和运行时接口的自托管后端服务。</p>
+  <p>从 Simprint 早期在线架构保留下来的遗留独立服务端。</p>
   <p>
     <img alt="Language Rust 2024" src="https://img.shields.io/badge/language-Rust%202024-f97316?style=flat-square&labelColor=0f172a" />
     <img alt="Framework Axum 0.8" src="https://img.shields.io/badge/framework-Axum%200.8-60a5fa?style=flat-square&labelColor=0f172a" />
     <img alt="Database PostgreSQL" src="https://img.shields.io/badge/database-PostgreSQL-38bdf8?style=flat-square&labelColor=0f172a" />
-    <img alt="Cache Redis" src="https://img.shields.io/badge/cache-Redis-f87171?style=flat-square&labelColor=0f172a" />
   </p>
   <p>
     <a href="./README.md">English</a> | <strong>简体中文</strong>
@@ -14,112 +13,59 @@
 
 ---
 
-## Introduction
+> [!IMPORTANT]
+> 当前 Simprint 桌面端采用 local-first 架构：业务数据保存在内嵌 SQLite 数据库中，环境运行时与主程序同进程运行。安装、使用或开发桌面端都不需要部署本服务端，也不需要 PostgreSQL、Redis 或远程业务 API。
 
-Simprint Server 是 Simprint 客户端和私有化部署场景使用的后端服务。它负责暴露应用 API、管理认证与持久化数据、初始化加密和存储相关资源，并在启动时自动执行内嵌的数据库迁移。
+## 当前定位
 
-它面向希望把 Simprint 部署在自有基础设施中的使用者，而不是依赖共享托管后端。服务通过本地 TOML 配置文件驱动，默认围绕 PostgreSQL、Redis 和兼容 S3 的对象存储来组织运行环境。
+本目录包含 Simprint 早期在线产品架构中的 Axum + PostgreSQL 独立后端。目前保留它主要用于历史代码维护、迁移参考，以及范围明确的服务端开发；它不属于桌面端默认运行链路。
 
-## Why Simprint Server?
+具体来说：
 
-想把 Simprint 作为自托管服务落地，通常不只是“起一个 HTTP 服务”这么简单：
+- `cargo tauri dev` 不会编译或启动本工程。
+- 桌面端不需要配置指向它的 `base_url`。
+- 桌面端用户和贡献者应阅读根目录 [README](../README.zh-CN.md) 与 [开发配置文档](../docs/development-setup.zh-CN.md)。
+- 新的桌面功能应使用 `src-tauri/crates/business` 中的内嵌业务层，除非项目另行明确决定。
 
-- 你需要控制 API 可用性、认证凭据和对象存储基础设施。
-- 你需要一套可以公开发布、但不会泄露真实环境配置的部署产物。
-- 你需要在发布和重启过程中稳定地完成数据库结构升级。
-- 你需要一个统一的后端入口来承载工作区、环境、代理和账号相关接口。
+## 维护者配置
 
-Simprint Server 的设计就是围绕这些约束展开的：单个 Rust 服务、配置优先的部署模型、内嵌数据库迁移，以及仅打包可公开示例配置的发布流程。
+只有变更明确针对 `server/` 时，才使用下面的说明。
 
-## Features
+### 前置条件
 
-- **核心应用 API**：在一个进程中承载账号、工作区、团队、环境、代理、模板、偏好、消息、扩展和本地运行时等接口。
-- **认证与密钥初始化**：支持登录相关流程、令牌刷新、白名单路由以及首次启动时的 RSA 密钥初始化。
-- **内嵌数据库迁移**：在 HTTP 服务开始接收流量前自动执行 `sqlx` migrations。
-- **兼容 S3 的对象存储集成**：为头像、扩展资源和版本相关文件接入外部对象存储。
-- **基于 Redis 的运行时协同**：使用 Redis 承担运行时协同和缓存类服务能力。
-- **面向 Docker 的发布打包**：生成包含 `Dockerfile`、`docker-compose.yml` 以及由 `configs/config.example.toml` 复制出的 `configs/config.toml` 的部署包。
-- **配置优先的运行方式**：本地运行和容器运行都使用同一套 `-f <config.toml>` 启动模型。
+- Rust stable
+- PostgreSQL
+- 邮件流程需要的可选 SMTP 配置
+- 与待测功能匹配的资源下载地址
 
-## Quick Start
-
-### Prerequisites
-
-- Rust toolchain
-- PostgreSQL 16+ 或兼容的 PostgreSQL 实例
-- Redis 7+
-- 兼容 S3 的对象存储
-- 可选的 SMTP 服务，用于邮件相关流程
-
-### 一键安装自托管服务端
-
-Linux 服务器可直接执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Simprint/simprint/main/deploy/install-server.sh | bash # 请修改客户端的配置， 如: base_url = http://127.0.0.1:40041/api/
-```
+当前本地配置没有 Redis 连接项。PostgreSQL 是这个独立组件必需的外部数据服务。
 
 ### 本地运行
 
+在 `server` 目录执行：
+
 ```bash
-cp configs/config.example.toml configs/config.local.toml
-# 修改 configs/config.local.toml
+cp configs/config.local.example.toml configs/config.local.toml
+# 启动前检查仅供本地使用的密钥和 PostgreSQL 连接。
 cargo run -- -f configs/config.local.toml
 ```
 
-示例配置默认监听 `40041` 端口，并使用 `/api/v1` 作为接口前缀。
+示例配置监听 `127.0.0.1:40041`，接口前缀为 `/api/v1`。启动时会执行 `server/migrations` 中的迁移。
 
-### 构建 Docker 发布包
-
-使用：
+### 验证变更
 
 ```bash
-uv run python build_docker.py
+cargo fmt -- --check
+cargo check
+cargo test
 ```
 
-默认构建产物包括：
+服务端与桌面端变更应尽量拆分，并在 Pull Request 中明确说明变更面向这个遗留独立组件。
 
-- `./simprint-server`
-- `./simprint-server-docker-*.tar.gz`
+## 部署产物
 
-也可以使用这些常见参数：
-
-```bash
-uv run python build_docker.py --clean
-uv run python build_docker.py --no-package
-uv run python build_docker.py --format zip
-uv run python build_docker.py --dev --no-package
-```
-
-打包后的 `configs/config.toml` 来自仓库中的 `configs/config.example.toml`，真实环境配置文件不会被包含在对外发布的部署包中。
-
-## Status
-
-Simprint Server 最初是作为私有商业后端体系的一部分开发的。当前这个仓库正在为公开开源发布做整理，文档也在同步重写，以便外部使用者更容易理解和部署独立的自托管版本。
-
-仓库中的部分模块划分和命名，仍然会带有早期内部部署模型的痕迹。当前方向是把面向客户端的网关服务整理成一个可以独立部署、便于公开协作的仓库。
-
-## Contributing
-
-这个仓库目前仍处于开源重构阶段，但已经欢迎通过 Issue 和 Pull Request 参与改进。
-
-当前更有价值的贡献方向包括：
-
-- 自托管部署文档和上手流程优化
-- 测试覆盖和回归验证补充
-- API 文档和路由级使用示例完善
-- 打包、发布和 CI 流程改进
-
-如果你准备快速建立上下文，建议先看这些入口：
-
-- `src/main.rs`
-- `src/cli.rs`
-- `configs/config.example.toml`
-- `build_docker.py`
-- `docs/`
+仓库中仍保留历史 Docker 打包和部署脚本，用于维护与迁移工作；它们不是当前桌面应用的推荐安装方式。在任何环境使用这些产物前，都应重新检查生成的配置、密钥、镜像来源和开放端口。
 
 ## License
 
-本项目采用 GNU Affero General Public License v3.0 (AGPLv3) 进行许可。
-
-如果你希望在不履行 AGPLv3 义务的前提下使用 Simprint Server，包括分发修改版本或以闭源服务形式提供修改版本，请联系获取商业许可。
+本组件遵循仓库的 GNU Affero General Public License v3.0 (AGPLv3) 许可。

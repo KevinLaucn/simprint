@@ -4,15 +4,19 @@
 
 ## 1. 先了解项目结构
 
-这个仓库包含三套相互独立的工程：
+桌面端由三部分组成，仓库中还保留一个不参与默认启动的遗留服务端组件：
 
-| 目录 | 技术栈 | 是否是桌面端启动的必需项 |
-| --- | --- | --- |
-| 根目录 | React、Vite、TypeScript、pnpm | 是 |
-| `src-tauri` | Tauri 2、Rust、嵌入式 SQLite | 是 |
-| `server` | Axum、Rust、PostgreSQL | 仅服务端联调时需要 |
+| 目录                        | 作用                                          | 是否是桌面端启动的必需项 |
+| --------------------------- | --------------------------------------------- | ------------------------ |
+| 根目录、`src`、`plugins`    | React、Vite、TypeScript、Slotkit 界面与插件   | 是                       |
+| `src-tauri`                 | Tauri 2、Rust 桌面外壳与本地服务              | 是                       |
+| `src-tauri/crates/business` | SQLite 业务模型、迁移和服务                   | 是                       |
+| `src-tauri/crates/runtime`  | 内嵌环境运行时和浏览器进程管理                | 是                       |
+| `server`                    | 早期在线架构保留的独立 Axum + PostgreSQL 服务 | 否                       |
 
-桌面端当前是 local-first 架构：业务请求会进入 `src-tauri` 内嵌的 SQLite 业务层，首次启动会自动创建本地数据库和迁移表结构。因此，普通桌面端开发不需要先启动 PostgreSQL、Redis 或远程 API。
+桌面端当前是 local-first 架构：前端通过 Tauri `invoke` 调用本地 Rust 服务，业务请求进入内嵌的 SQLite 业务层，环境运行时与主程序同进程运行。首次启动会自动创建本地用户、默认工作区、数据库和迁移表结构。
+
+普通桌面端开发不需要启动 `server`，也不需要 PostgreSQL、Redis、远程 API 或 `base_url`。只有明确维护遗留独立服务端时，才需要单独进入 `server/` 按该目录的说明操作。
 
 ## 2. 安装 Windows 前置环境
 
@@ -107,7 +111,7 @@ Copy-Item `
   .\src-tauri\config.development.toml
 ```
 
-仓库的开发启动约定要求从示例复制该文件；当前内容主要是固定版本 WebView 下载地址。它不包含远程 API 地址，也不需要填写 PostgreSQL 连接信息。
+仓库的开发启动约定要求从示例复制该文件；当前内容是固定版本 WebView 下载地址。它不包含远程 API 地址，也不需要填写数据库连接信息。
 
 `config.development.toml` 已被 `.gitignore` 忽略，不要把真实环境地址、密钥或个人路径提交到仓库。
 
@@ -137,60 +141,37 @@ pnpm dev
 
 但依赖 Tauri `invoke`、本地 SQLite、浏览器内核或系统窗口的功能，在纯 Vite 页面中不能完整工作。
 
-## 8. 可选：启动服务端进行联调
+## 8. 本地运行时与数据目录
 
-只有需要验证独立 HTTP 服务、PostgreSQL 数据库或服务端路由时，才执行这一节。
-
-### 8.1 准备 PostgreSQL
-
-Windows 上推荐使用 Docker Desktop，只启动 Compose 中的 PostgreSQL：
-
-```powershell
-docker compose -f .\server\docker-compose.yml up -d postgres
-```
-
-Compose 会创建：
-
-- 数据库：`simprintdb`
-- 用户：`simprint`
-- 密码：`change-me`
-- 地址：`127.0.0.1:5432`
-
-检查容器状态：
-
-```powershell
-docker compose -f .\server\docker-compose.yml ps
-```
-
-### 8.2 配置并启动服务端
-
-```powershell
-Set-Location .\server
-Copy-Item .\configs\config.local.example.toml .\configs\config.local.toml
-cargo fetch
-cargo run -- -f .\configs\config.local.toml
-```
-
-服务端默认监听：
+Windows 正式运行时的默认根目录是：
 
 ```text
-http://127.0.0.1:40041
+%LOCALAPPDATA%\Simprint
 ```
 
-启动时会自动执行 `server/migrations` 中的数据库迁移。
+主要文件和目录如下：
 
-当前服务端本地配置说明：
+| 路径                          | 用途                                         |
+| ----------------------------- | -------------------------------------------- |
+| `data\simprint.db`            | 用户、工作区、环境、代理、标签等本地业务数据 |
+| `data\profiles`               | 正式运行时的浏览器 profile                   |
+| `data\webview`                | Tauri WebView2 数据                          |
+| `cache`                       | 浏览器缓存和内核下载缓存                     |
+| `config\store.json`           | 应用设置                                     |
+| `config\browser-kernels.json` | 可选的用户内核目录覆盖配置                   |
+| `logs`                        | 应用日志                                     |
 
-- PostgreSQL 是当前本地启动最关键的外部依赖。
-- `storage.public_base_url` 只是资源 URL 配置，使用扩展、头像或版本下载功能时需要替换为真实地址。
-- SMTP 是邮件功能的可选依赖。
-- README 中提到 Redis，但当前服务上下文使用内存缓存，源码没有对应的 Redis 连接配置；不要因为桌面端开发而额外安装 Redis。
+从源码仓库运行时，浏览器 profile 默认放在仓库的 `data\profiles`，便于开发环境和正式数据隔离；SQLite 数据库仍位于 `%LOCALAPPDATA%\Simprint\data\simprint.db`。应用设置可以覆盖 profile、缓存、日志和下载目录。
 
-停止服务端：在运行服务端的 PowerShell 窗口按 `Ctrl+C`。停止 PostgreSQL 容器：
+修改存储路径、备份数据库或移动 profile 前，应先关闭 Simprint 和所有由它启动的浏览器进程。不要在应用运行时直接替换 SQLite 数据库或浏览器 profile。
 
-```powershell
-docker compose -f .\server\docker-compose.yml stop postgres
-```
+桌面端的核心业务不依赖远程服务，但以下功能仍可能访问网络：
+
+- 下载浏览器内核和应用更新。
+- 访问代理、目标网站以及 IP、语言或时区检测服务。
+- 用户主动启用和调用的 Local API、MCP 或其他外部集成。
+
+这些网络访问不等同于把本地工作区数据托管到 Simprint 社区服务器。
 
 ## 9. 启动成功后的检查
 
@@ -208,14 +189,6 @@ pnpm lint
 pnpm format:check
 pnpm rust:fmt:check
 pnpm rust:check
-```
-
-服务端单独检查：
-
-```powershell
-Push-Location .\server
-cargo check
-Pop-Location
 ```
 
 ## 10. 常见问题
@@ -249,33 +222,19 @@ pnpm --version
 
 优先使用 Node.js 20 和 pnpm 9。不要先删除 `pnpm-lock.yaml`。
 
-### 端口 `40041` 被占用
-
-查看占用进程：
-
-```powershell
-Get-NetTCPConnection -LocalPort 40041 -ErrorAction SilentlyContinue
-```
-
-关闭占用端口的程序，或修改 `server/configs/config.local.toml` 中的 `app.port`。
-
-### 服务端提示 PostgreSQL 连接失败
-
-确认容器正在运行：
-
-```powershell
-docker compose -f .\server\docker-compose.yml ps postgres
-```
-
-并确认 `server/configs/config.local.toml` 中的连接串仍是：
-
-```text
-postgres://simprint:change-me@127.0.0.1:5432/simprintdb
-```
-
 ### 桌面端需要远程服务地址吗？
 
-当前桌面端的主要业务路由已经由 `src-tauri` 的本地 SQLite 业务层处理，最小开发启动不需要配置 `base_url`。只有明确开发独立服务端或尚未迁移到本地业务层的功能时，才需要按具体代码路径配置远程服务。
+不需要。当前桌面端的业务路由由 `src-tauri` 的本地 SQLite 业务层处理，开发启动不读取 `base_url`，也不要求本机存在 PostgreSQL 或 Redis。
+
+### 为什么仓库中还有 `server` 目录？
+
+它是早期在线架构保留的独立组件，用于历史代码维护和迁移参考，不会被 `cargo tauri dev` 编译或启动。桌面端功能不应为了复用该目录而重新引入远程 API 依赖。
+
+如果贡献内容明确针对 `server/`，请把它作为独立工程验证，并在 Pull Request 中说明变更不属于桌面端默认运行链路。
+
+### 浏览器内核下载或安装失败
+
+先确认网络能够访问内核下载地址，并查看 `%LOCALAPPDATA%\Simprint\logs` 中的应用日志。Windows 杀毒软件或文件索引程序有时会短暂占用刚解压的内核文件；关闭相关浏览器环境后重试，通常不需要清理 SQLite 数据库。
 
 ## 11. 推荐的日常启动顺序
 
@@ -293,9 +252,4 @@ Set-Location D:\code\rust\simprint
 pnpm dev
 ```
 
-桌面端 + 独立服务端联调：先启动 PostgreSQL 和 `server`，再在另一个 PowerShell 窗口启动：
-
-```powershell
-Set-Location D:\code\rust\simprint
-cargo tauri dev --features development
-```
+维护遗留 `server/` 组件时，请在单独的终端和独立数据库中运行，不要把它加入普通桌面端的启动脚本。

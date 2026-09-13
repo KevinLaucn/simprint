@@ -27,9 +27,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/**"
-    ],
     "windows": {
       "allowDowngrades": true,
       "certificateThumbprint": null,

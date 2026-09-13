@@ -18,7 +18,7 @@ function oklchToCss(lightness: string, chroma: string, hue: string, alpha?: stri
   const l3 = l_ * l_ * l_;
   const m3 = m_ * m_ * m_;
   const s3 = s_ * s_ * s_;
-  const r = 4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+  const r = 4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309692326 * s3;
   const g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
   const bChannel = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3;
   const gamma = (value: number) =>
@@ -29,6 +29,13 @@ function oklchToCss(lightness: string, chroma: string, hue: string, alpha?: stri
     return `#${rgb.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
   const opacity = alpha.endsWith('%') ? Number.parseFloat(alpha) / 100 : Number.parseFloat(alpha);
   return `rgba(${rgb.join(',')},${Math.max(0, Math.min(1, opacity))})`;
+}
+
+function replaceLegacyOklch(css: string) {
+  return css.replace(
+    /oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)/g,
+    (_match, lightness, chroma, hue, alpha) => oklchToCss(lightness, chroma, hue, alpha)
+  );
 }
 
 function replaceLegacyColorMix(css: string) {
@@ -74,17 +81,14 @@ function win7LegacyCssPlugin() {
           typeof asset.source !== 'string'
         )
           continue;
-        asset.source = replaceLegacyColorMix(asset.source)
-          // Never leave the function arguments behind. That creates invalid
-          // declarations such as `color: currentColor 5%, transparent`.
-          .replace(/color-mix\([^)]*\)/gi, 'transparent')
-          .replace(/transparent[\d.]+%,transparent\)/gi, 'transparent')
-          .replace(/\bin oklab\b/gi, 'in srgb')
-          .replace(/\bin lab\b/gi, 'in srgb')
-          .replace(
-            /oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)/g,
-            (_match, lightness, chroma, hue, alpha) => oklchToCss(lightness, chroma, hue, alpha)
-          )
+
+        // Convert OKLCH variables first so Tailwind v4 slash-alpha color-mix()
+        // utilities can be reduced to rgba() for the Chromium 109 WebView.
+        // Unknown color-mix() declarations are deliberately left intact: Chromium
+        // 109 will ignore an unsupported declaration, which is safer than turning
+        // text/background colors into transparent values.
+        const legacyCss = replaceLegacyOklch(asset.source);
+        asset.source = replaceLegacyColorMix(legacyCss)
           .concat(
             '\n/* Win7/Chromium 109 explicit active-tab color fallback */\n' +
               '[data-slot="tabs-trigger"][data-state="active"],[role="tab"][aria-selected="true"]{color:#333!important}\n' +

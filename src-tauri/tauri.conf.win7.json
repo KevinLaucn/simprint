@@ -18,7 +18,9 @@
   },
   "bundle": {
     "active": true,
-    "resources": ["resources/supermium"],
+    "resources": {
+      "resources/supermium/": "supermium/"
+    },
     "createUpdaterArtifacts": true,
     "targets": "nsis",
     "icon": [

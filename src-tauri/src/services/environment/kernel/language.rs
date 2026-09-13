@@ -5,12 +5,12 @@ use super::types::{ProxyConfig, TIMEZONE_DETECTION_TIMEOUT_SECS};
 /// 检测语言
 ///
 /// # 逻辑
-/// - 有代理配置：先用代理检测，失败则直连检测
+/// - 有代理配置：仅通过代理检测，失败不回退直连
 /// - 无代理配置：使用系统代理（reqwest 自动检测）
 ///
 /// # 返回
 /// - `Some(language)`: 检测成功
-/// - `None`: 所有检测都失败
+/// - `None`: 检测失败
 pub async fn detect_language(proxy: Option<&ProxyConfig>) -> Option<String> {
     if let Some(proxy_cfg) = proxy {
         detect_with_proxy(proxy_cfg).await
@@ -26,8 +26,9 @@ async fn detect_with_proxy(proxy_cfg: &ProxyConfig) -> Option<String> {
         Some(TIMEZONE_DETECTION_TIMEOUT_SECS),
     ) {
         Ok(client) => client,
-        Err(_) => {
-            return detect_with_direct_connection().await;
+        Err(error) => {
+            log::warn!("proxy language detection client initialization failed: {}", error);
+            return None;
         }
     };
 
@@ -41,7 +42,8 @@ async fn detect_with_proxy(proxy_cfg: &ProxyConfig) -> Option<String> {
         let ip_info = proxy_result.ip_info.as_ref()?;
         infer_language_from_country_code(ip_info.country_code.as_str())
     } else {
-        detect_with_direct_connection().await
+        log::warn!("proxy language detection failed; direct fallback is disabled");
+        None
     }
 }
 
@@ -53,20 +55,6 @@ async fn detect_with_system_proxy() -> Option<String> {
 
     if result.success {
         let ip_info = result.ip_info.as_ref()?;
-        infer_language_from_country_code(ip_info.country_code.as_str())
-    } else {
-        None
-    }
-}
-
-async fn detect_with_direct_connection() -> Option<String> {
-    let local_result = crate::infrastructure::proxy::detector::detect_direct_ip_with_timeout(
-        TIMEZONE_DETECTION_TIMEOUT_SECS,
-    )
-    .await;
-
-    if local_result.success {
-        let ip_info = local_result.ip_info.as_ref()?;
         infer_language_from_country_code(ip_info.country_code.as_str())
     } else {
         None

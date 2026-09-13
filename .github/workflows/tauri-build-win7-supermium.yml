@@ -283,13 +283,41 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "win7-latest"
-          gh release view $tag --repo "${{ github.repository }}" 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Simprint Win7 latest" --notes "Rolling Windows 7 x64 compatibility release."
+          $repo = "${{ github.repository }}"
+
+          # A missing rolling release is expected on the first successful build.
+          # Windows PowerShell can promote gh stderr to NativeCommandError under Stop,
+          # so probe existence with Continue and inspect the native process exit code.
+          $savedErrorActionPreference = $ErrorActionPreference
+          try {
+            $ErrorActionPreference = "Continue"
+            & gh.exe release view $tag --repo $repo *> $null
+            $releaseExists = ($LASTEXITCODE -eq 0)
+          } finally {
+            $ErrorActionPreference = $savedErrorActionPreference
           }
-          gh release upload $tag `
+
+          if (-not $releaseExists) {
+            & gh.exe release create $tag `
+              --repo $repo `
+              --target "${{ github.sha }}" `
+              --title "Simprint Win7 latest" `
+              --notes "Rolling Windows 7 x64 compatibility release."
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create release $tag (exit $LASTEXITCODE)"
+            }
+          } else {
+            Write-Host "Rolling release $tag already exists; replacing assets."
+          }
+
+          & gh.exe release upload $tag `
             "dist-win7/Simprint-Win7-x64.exe" `
             "dist-win7/Simprint-Win7-x64.exe.sig" `
             "dist-win7/latest-win7.json" `
-            --repo "${{ github.repository }}" `
+            --repo $repo `
             --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload Win7 release assets (exit $LASTEXITCODE)"
+          }
+
+          Write-Host "Published rolling Win7 release: $tag"

@@ -103,25 +103,20 @@ $errorTypes = Replace-TextOnce $errorTypes `
   '#[error("[030000] IO error")]' `
   '#[error("[030000] IO error: {0}")]' `
   'Win7 IO error detail'
-$frontendErrorOld = @'
-    pub(super) fn format_for_frontend(&self) -> String {
-        if cfg!(debug_assertions) {
-            self.to_string()
-        } else {
-            format!("[{}]", self.code())
-        }
-    }
-'@
-$frontendErrorNew = @'
-    pub(super) fn format_for_frontend(&self) -> String {
-        if cfg!(debug_assertions) || cfg!(feature = "win7-offline") {
-            self.to_string()
-        } else {
-            format!("[{}]", self.code())
-        }
-    }
-'@
-$errorTypes = Replace-TextOnce $errorTypes $frontendErrorOld $frontendErrorNew 'Win7 frontend error detail'
+$frontendErrorPattern = '(?s)(pub\(super\)\s+fn\s+format_for_frontend\(&self\)\s*->\s*String\s*\{.*?\bif\s+)cfg!\(debug_assertions\)\s*\{'
+$frontendErrorMatches = [regex]::Matches($errorTypes, $frontendErrorPattern)
+if ($frontendErrorMatches.Count -eq 1) {
+  $errorTypes = [regex]::Replace(
+    $errorTypes,
+    $frontendErrorPattern,
+    '$1cfg!(debug_assertions) || cfg!(feature = "win7-offline") {',
+    1
+  )
+} elseif ($errorTypes.Contains('cfg!(debug_assertions) || cfg!(feature = "win7-offline")')) {
+  Write-Host 'Win7 frontend error detail already applied'
+} else {
+  throw "Win7 frontend error detail target was not found exactly once (found $($frontendErrorMatches.Count))"
+}
 [IO.File]::WriteAllText($errorTypesPath, $errorTypes, $utf8NoBom)
 
 # Win7 always launches the pinned Supermium directly from the Tauri resource

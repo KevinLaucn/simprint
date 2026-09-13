@@ -107,22 +107,13 @@ jobs:
       - name: Prepare Win7 Tauri config with public key injection
         run: node deploy/prepare-tauri-config.mjs win7-offline x86_64-win7-windows-msvc
 
-      - name: Prepare Win7 build version
-        shell: powershell
-        env:
-          VERSION: 0.1.${{ github.run_number }}
-        run: node deploy/prepare-version.mjs
-
-      - name: Install PE inspection dependency
-        run: python -m pip install pefile
-
       - name: Prepare Win7 legacy Windows libraries
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          # A clean GitHub runner does not have Cargo registry sources yet.
-          # Fetch while rustup is still visible, before the Tier-3 target workaround hides it.
+          # Fetch while the committed Cargo.toml/Cargo.lock pair is still unchanged.
+          # prepare-version mutates Cargo.toml later and would make --locked reject the fetch.
           & cargo.exe fetch `
             --locked `
             --manifest-path src-tauri/Cargo.toml `
@@ -141,7 +132,6 @@ jobs:
             throw "Cargo registry was not created after cargo fetch: $registry"
           }
 
-          # windows-targets 0.48.5 delegates the MSVC import library to this package.
           $packageDir = Get-ChildItem $registry -Recurse -Directory -Filter "windows_x86_64_msvc-0.48.5" -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $packageDir) {
@@ -154,14 +144,21 @@ jobs:
           }
           $nativeDir = Split-Path $legacyLib -Parent
 
-          # RUSTFLAGS overrides target.<triple>.rustflags from .cargo/config.toml.
-          # Use the target-scoped Cargo environment variable and preserve crt-static explicitly.
           $targetFlags = "-C target-feature=+crt-static -L native=$nativeDir"
           "CARGO_TARGET_X86_64_WIN7_WINDOWS_MSVC_RUSTFLAGS=$targetFlags" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "Legacy Windows import library: $legacyLib"
           Write-Host "Win7 target rustflags: $targetFlags"
+
+      - name: Prepare Win7 build version
+        shell: powershell
+        env:
+          VERSION: 0.1.${{ github.run_number }}
+        run: node deploy/prepare-version.mjs
+
+      - name: Install PE inspection dependency
+        run: python -m pip install pefile
 
       - name: Hide rustup for the Win7 Tier-3 target
         shell: powershell
@@ -209,12 +206,10 @@ jobs:
           $info = Get-Item $finalExe
           Write-Host ("Installer: {0}; size: {1:N1} MB" -f $info.FullName, ($info.Length / 1MB))
 
-          # 1. 检查安装包体积（必须大于 150MB，确保 WebView2 和 Supermium 已打包进入）
           if ($info.Length -lt 150MB) {
             throw "Installer is unexpectedly small ($($info.Length) bytes). Bundled WebView2 or Supermium may be missing."
           }
 
-          # 2. 解包安装包以严格验证内嵌组件与 PE 兼容性
           $unpackDir = Join-Path $env:RUNNER_TEMP "installer-unpack"
           Remove-Item $unpackDir -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $unpackDir | Out-Null
@@ -223,16 +218,13 @@ jobs:
           & 7z.exe x -y -o"$unpackDir" $finalExe | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "7z unpack failed with exit code $LASTEXITCODE" }
 
-          # 验证 WebView2 109 核心文件存在
           $foundWebview = Get-ChildItem $unpackDir -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
           if (-not $foundWebview) { throw "Verification failed: msedgewebview2.exe not found in unpacked installer!" }
           Write-Host "Verified WebView2 inside installer: $($foundWebview.FullName)"
 
-          # 3. 递归扫描解包后的全部 .exe 和 .dll，严格门禁 Windows 10+ 专属符号 (如 ProcessPrng)
           python scripts/check-win7-pe.py $unpackDir
           if ($LASTEXITCODE -ne 0) { throw "check-win7-pe.py inspection failed on installer binaries!" }
 
-          # 4. 提取 Tauri updater 签名文件
           $sigFile = Get-ChildItem $nsisDir -Filter "$($installer.Name).sig" -File | Select-Object -First 1
           if (-not $sigFile) {
             $sigFile = Get-ChildItem $nsisDir -Filter "*.sig" -File | Select-Object -First 1
@@ -246,7 +238,6 @@ jobs:
           $sigContent = (Get-Content $finalSig -Raw).Trim()
           Write-Host "Signature extracted: $sigContent"
 
-          # 5. 生成专用的 latest-win7.json 独立更新清单
           $tag = "win7-latest"
           $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/Simprint-Win7-x64.exe"

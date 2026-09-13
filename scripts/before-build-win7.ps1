@@ -124,22 +124,58 @@ $frontendErrorNew = @'
 $errorTypes = Replace-TextOnce $errorTypes $frontendErrorOld $frontendErrorNew 'Win7 frontend error detail'
 [IO.File]::WriteAllText($errorTypesPath, $errorTypes, $utf8NoBom)
 
-# The Win7 bundle already carries a complete, pinned Supermium tree. Running
-# the browser directly from Tauri's resource directory avoids first-launch
-# staging/copy/remove/rename/marker writes that can surface as [030000] on
-# locked or permission-sensitive Windows 7 profiles. Each environment still
-# has its own --user-data-dir, so sharing the executable tree is safe.
+# Win7 always launches the pinned Supermium directly from the Tauri resource
+# directory. Do not resolve/create a profiles kernel directory, do not consult
+# legacy marker files, and do not copy/rename the browser tree on first launch.
+# This removes the remaining profile-path IO from kernel preparation and also
+# prevents stale bundled copies from surviving an app update.
 $kernelServicePath = Join-Path $rootDir 'src-tauri/src/services/environment/kernel/mod.rs'
 $kernelService = [IO.File]::ReadAllText($kernelServicePath).Replace("`r`n", "`n")
-$kernelPattern = '(?s)    if find_executable\(&bundled_dir\)\.is_none\(\) \{\n        return Err\(format!\("安装包中的 Supermium 内核不完整: \{\}", bundled_dir\.display\(\)\)\.into\(\)\);\n    \}\n\n    let staging_dir = base\.join\(format!\(.*?\n    Ok\(kernel_dir\.join\(relative_exe\)\)'
+$kernelPattern = '(?s)#\[cfg\(feature = "win7-offline"\)\]\nasync fn ensure_supermium_bundled\(.*?\n\}\n\nasync fn record_ready_installation'
 $kernelMatches = [regex]::Matches($kernelService, $kernelPattern)
 if ($kernelMatches.Count -ne 1) {
-  throw "Win7 bundled Supermium direct-launch patch expected one target, found $($kernelMatches.Count)"
+  throw "Win7 bundled Supermium direct-resource patch expected one target, found $($kernelMatches.Count)"
 }
 $kernelReplacement = @'
-    let bundled_exe = find_executable(&bundled_dir)
-        .ok_or_else(|| format!("安装包中的 Supermium 内核不完整: {}", bundled_dir.display()))?;
-    Ok(bundled_exe)
+#[cfg(feature = "win7-offline")]
+async fn ensure_supermium_bundled(
+    app: &tauri::AppHandle,
+    _env_uuid: &Option<String>,
+    _install_dir_name: &str,
+    _profiles_path: &str,
+    _status_emitter: Option<&KernelStatusEmitter>,
+) -> Result<std::path::PathBuf> {
+    let bundled_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("无法定位安装包资源目录: {error}"))?
+        .join("supermium");
+    if !bundled_dir.is_dir() {
+        return Err(format!("安装包缺少 Supermium 内核资源: {}", bundled_dir.display()).into());
+    }
+
+    let mut pending = vec![bundled_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.file_name().is_some_and(|name| {
+                name.eq_ignore_ascii_case("chrome.exe")
+                    || name.eq_ignore_ascii_case("supermium.exe")
+            }) {
+                return Ok(path);
+            }
+        }
+    }
+
+    Err(format!("安装包中的 Supermium 内核不完整: {}", bundled_dir.display()).into())
+}
+
+async fn record_ready_installation
 '@
 $kernelService = [regex]::Replace($kernelService, $kernelPattern, $kernelReplacement, 1)
 [IO.File]::WriteAllText($kernelServicePath, $kernelService, $utf8NoBom)
@@ -167,4 +203,10 @@ if (-not (Test-Path $runtimePatch)) {
 }
 & $runtimePatch
 
-Write-Host 'Applied Win7 native-frame/titlebar, sidebar contrast, bundled-kernel, error-detail, and Supermium runtime compatibility overlays.'
+$runtimeV2Patch = Join-Path $rootDir 'scripts/patch-win7-supermium-runtime-v2.ps1'
+if (-not (Test-Path $runtimeV2Patch)) {
+  throw "Win7 Supermium runtime v2 patch script was not found: $runtimeV2Patch"
+}
+& $runtimeV2Patch
+
+Write-Host 'Applied Win7 native-frame/titlebar, sidebar contrast, direct bundled kernel, detailed errors, and Supermium runtime v2 compatibility overlays.'

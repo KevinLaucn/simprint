@@ -112,14 +112,20 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Fetch while the committed Cargo.toml/Cargo.lock pair is still unchanged.
-          # prepare-version mutates Cargo.toml later and would make --locked reject the fetch.
-          & cargo.exe fetch `
-            --locked `
-            --manifest-path src-tauri/Cargo.toml `
-            --target $env:WIN7_TARGET
-          if ($LASTEXITCODE -ne 0) {
-            throw "cargo fetch failed with exit code $LASTEXITCODE"
+          # Target-specific resolution for the Tier-3 Win7 target changes Cargo.lock.
+          # Allow that only for dependency prefetch, then restore the committed lockfile exactly.
+          $lockPath = "src-tauri/Cargo.lock"
+          $lockBackup = Join-Path $env:RUNNER_TEMP "Cargo.lock.before-win7-prefetch"
+          Copy-Item $lockPath $lockBackup -Force
+          try {
+            & cargo.exe fetch `
+              --manifest-path src-tauri/Cargo.toml `
+              --target $env:WIN7_TARGET
+            if ($LASTEXITCODE -ne 0) {
+              throw "cargo fetch failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            Copy-Item $lockBackup $lockPath -Force
           }
 
           $cargoHome = if ([string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {

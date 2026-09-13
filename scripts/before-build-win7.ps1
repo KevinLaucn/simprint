@@ -36,7 +36,8 @@ if (-not $knownAfter) {
 # top edge of frameless windows. The native frame also gives Win7 the normal
 # taskbar/titlebar icon path. Preserve Simprint's app titlebar content, but hide
 # its duplicate min/max/close buttons for this build.
-$windowService = Join-Path $PWD 'src-tauri/src/services/window/mod.rs'
+$rootDir = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path } else { $PWD }
+$windowService = Join-Path $rootDir 'src-tauri/src/services/window/mod.rs'
 $windowText = [IO.File]::ReadAllText($windowService)
 $mainFramePattern = '(\.center\(\)\r?\n\s*)\.decorations\(false\)(\r?\n\s*\.visible\(false\))'
 $mainFrameMatches = [regex]::Matches($windowText, $mainFramePattern)
@@ -46,7 +47,7 @@ if ($mainFrameMatches.Count -ne 1) {
 $windowText = [regex]::Replace($windowText, $mainFramePattern, '$1.decorations(true)$2', 1)
 [IO.File]::WriteAllText($windowService, $windowText, (New-Object System.Text.UTF8Encoding($false)))
 
-$appLayout = Join-Path $PWD 'plugins/layouts/app-layout/src/index.tsx'
+$appLayout = Join-Path $rootDir 'plugins/layouts/app-layout/src/index.tsx'
 $layoutText = [IO.File]::ReadAllText($appLayout)
 if (-not $layoutText.Contains('<AppTitlebar />')) {
   throw 'Win7 titlebar compatibility patch target was not found'
@@ -56,7 +57,13 @@ $layoutText = $layoutText.Replace('<AppTitlebar />', '<AppTitlebar showWindowCon
 
 Write-Host 'Applied Win7 native-frame/titlebar compatibility overlay.'
 
-& node build.cjs
-if ($LASTEXITCODE -ne 0) {
-  throw "Frontend build failed with exit code $LASTEXITCODE"
+Push-Location $rootDir
+try {
+  & node build.cjs
+  if ($LASTEXITCODE -ne 0) {
+    throw "Frontend build failed with exit code $LASTEXITCODE"
+  }
+} finally {
+  Pop-Location
 }
+

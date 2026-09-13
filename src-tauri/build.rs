@@ -118,7 +118,9 @@ fn validate_selected_tauri_config(mode: &str) {
         let normalized_path = configured_path.replace('\\', "/");
 
         assert!(
-            normalized_path.trim_end_matches('/').ends_with("Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64"),
+            normalized_path
+                .trim_end_matches('/')
+                .ends_with("Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64"),
             "win7-offline path '{configured_path}' must point to WebView2 109 x64"
         );
     }

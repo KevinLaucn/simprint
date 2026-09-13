@@ -29,28 +29,100 @@ pub use types::{
 /// 内核服务
 pub struct KernelService;
 
-/// Windows 7 固定离线版直接使用安装包内自带的 Supermium，不进行任何内核下载。
+/// Windows 7 版本使用固定的 Supermium；浏览器文件首次使用时在线下载。
 #[cfg(feature = "win7-offline")]
-fn bundled_supermium_executable() -> Result<std::path::PathBuf> {
-    let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
-    let app_dir = exe
-        .parent()
-        .ok_or_else(|| "获取应用程序目录失败")?
-        .to_path_buf();
-    let candidates = [
-        app_dir.join("browser").join("supermium"),
-        app_dir.join("resources").join("supermium"),
-        app_dir.join("resources").join("browser").join("supermium"),
-    ];
-    for dir in &candidates {
-        for name in ["chrome.exe", "supermium.exe"] {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
+async fn ensure_supermium_online(
+    app: &tauri::AppHandle,
+    env_uuid: &Option<String>,
+    install_dir_name: &str,
+    profiles_path: &str,
+    status_emitter: Option<&KernelStatusEmitter>,
+) -> Result<std::path::PathBuf> {
+    const URL: &str = "https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip";
+    const SHA256: &str = "805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca";
+
+    let base = utils::resolve_profiles_base(app, profiles_path)?;
+    let kernel_dir = utils::resolve_kernel_install_dir(&base, install_dir_name)?;
+    let find_executable = |root: &std::path::Path| -> Option<std::path::PathBuf> {
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let entries = fs::read_dir(dir).ok()?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.file_name().is_some_and(|name| {
+                    name.eq_ignore_ascii_case("chrome.exe")
+                        || name.eq_ignore_ascii_case("supermium.exe")
+                }) {
+                    return Some(path);
+                }
             }
         }
+        None
+    };
+
+    if let Some(exe_path) = find_executable(&kernel_dir) {
+        return Ok(exe_path);
     }
-    Err(format!("未找到内置 Supermium 浏览器：尝试路径 {:?}", candidates).into())
+
+    utils::emit_status(
+        status_emitter,
+        env_uuid,
+        install_dir_name,
+        EnvironmentStatus::Downloading,
+        Some("正在下载 Supermium 浏览器内核…"),
+        Some(0.0),
+        Some(0),
+        None,
+    );
+
+    let cache_dir = crate::core::paths::PathManager::get_kernel_cache_dir(app)?;
+    fs::create_dir_all(&cache_dir)?;
+    let zip_path = cache_dir.join(format!("supermium-{SHA256}.zip"));
+    if !zip_path.is_file() {
+        let response = reqwest::Client::new().get(URL).send().await?;
+        if !response.status().is_success() {
+            return Err(format!("下载 Supermium 失败：HTTP {}", response.status()).into());
+        }
+        let body = response.bytes().await?;
+        fs::write(&zip_path, body)?;
+    }
+
+    if crate::core::utils::hash::calculate_file_hash(&zip_path)? != SHA256 {
+        let _ = fs::remove_file(&zip_path);
+        return Err("Supermium 下载文件校验失败".into());
+    }
+
+    let staging_dir = base.join(format!(
+        ".{install_dir_name}.supermium-staging-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&staging_dir)?;
+    utils::emit_status(
+        status_emitter,
+        env_uuid,
+        install_dir_name,
+        EnvironmentStatus::Extracting,
+        Some("正在解压 Supermium 浏览器内核…"),
+        None,
+        None,
+        None,
+    );
+    if let Err(error) = utils::extract_zip_to_dir(&zip_path, &staging_dir) {
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+    let exe_path = find_executable(&staging_dir)
+        .ok_or_else(|| "Supermium 压缩包中未找到 chrome.exe 或 supermium.exe")?;
+    if kernel_dir.exists() {
+        fs::remove_dir_all(&kernel_dir)?;
+    }
+    fs::rename(&staging_dir, &kernel_dir)?;
+    let relative_exe = exe_path
+        .strip_prefix(&staging_dir)
+        .map_err(|_| "解析 Supermium 可执行文件路径失败")?;
+    Ok(kernel_dir.join(relative_exe))
 }
 
 async fn record_ready_installation(
@@ -118,20 +190,26 @@ impl KernelService {
 
         #[cfg(feature = "win7-offline")]
         {
-            if let Ok(exe_path) = bundled_supermium_executable() {
-                utils::emit_status(
-                    status_emitter.as_ref(),
-                    &env_uuid,
-                    &install_dir_name,
-                    EnvironmentStatus::Ready,
-                    Some("Supermium 固定内核已就绪"),
-                    None,
-                    None,
-                    None,
-                );
-                record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-fixed").await;
-                return Ok(exe_path.to_string_lossy().to_string());
-            }
+            let exe_path = ensure_supermium_online(
+                &app,
+                &env_uuid,
+                &install_dir_name,
+                &profiles_path,
+                status_emitter.as_ref(),
+            )
+            .await?;
+            utils::emit_status(
+                status_emitter.as_ref(),
+                &env_uuid,
+                &install_dir_name,
+                EnvironmentStatus::Ready,
+                Some("Supermium 固定内核已就绪"),
+                None,
+                None,
+                None,
+            );
+            record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-online").await;
+            return Ok(exe_path.to_string_lossy().to_string());
         }
 
         let base = utils::resolve_profiles_base(&app, &profiles_path)?;

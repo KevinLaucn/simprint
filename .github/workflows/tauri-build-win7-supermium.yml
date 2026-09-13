@@ -1,4 +1,4 @@
-name: tauri-build-win7-supermium-offline
+name: tauri-build-win7-supermium-online
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: win7-supermium-offline
+  group: win7-supermium-online
   cancel-in-progress: true
 
 jobs:
@@ -24,9 +24,6 @@ jobs:
       RUST_TOOLCHAIN: nightly-2026-09-01
       WEBVIEW_VERSION: 109.0.1518.78
       WEBVIEW_URL: https://github.com/westinyang/WebView2RuntimeArchive/releases/download/109.0.1518.78/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64.cab
-      SUPERMIUM_VERSION: v144-r5
-      SUPERMIUM_URL: https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip
-      SUPERMIUM_SHA256: 805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca
       TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -107,40 +104,6 @@ jobs:
           Write-Host "Bundled WebView2: $($webviewExe.Directory.FullName)"
           Write-Host "Signer: $($sig.SignerCertificate.Subject)"
 
-      - name: Bundle pinned Supermium portable browser
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $zip = Join-Path $env:RUNNER_TEMP "supermium-v144-r5-x64.zip"
-          $extract = Join-Path $env:RUNNER_TEMP "supermium-extract"
-          $target = "src-tauri/resources/supermium"
-
-          Remove-Item $zip -Force -ErrorAction SilentlyContinue
-          & curl.exe -L --fail --retry 5 --retry-delay 2 --connect-timeout 30 --output $zip $env:SUPERMIUM_URL
-          if ($LASTEXITCODE -ne 0) { throw "Supermium download failed with exit code $LASTEXITCODE" }
-          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $env:SUPERMIUM_SHA256.ToLowerInvariant()) {
-            throw "Supermium SHA256 mismatch: expected=$env:SUPERMIUM_SHA256 actual=$actual"
-          }
-
-          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
-          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
-
-          $browserExe = Get-ChildItem $extract -Recurse -File |
-            Where-Object { $_.Name -eq 'chrome.exe' } |
-            Select-Object -First 1
-          if (-not $browserExe) {
-            $browserExe = Get-ChildItem $extract -Recurse -File |
-              Where-Object { $_.Name -eq 'supermium.exe' } |
-              Select-Object -First 1
-          }
-          if (-not $browserExe) { throw "Supermium executable not found in pinned archive" }
-
-          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $target | Out-Null
-          Copy-Item (Join-Path $browserExe.Directory.FullName '*') $target -Recurse -Force
-          Write-Host "Bundled Supermium root: $($browserExe.Directory.FullName)"
-
       - name: Prepare Win7 Tauri config with public key injection
         run: node deploy/prepare-tauri-config.mjs win7-offline x86_64-win7-windows-msvc
 
@@ -214,11 +177,6 @@ jobs:
           if (-not $foundWebview) { throw "Verification failed: msedgewebview2.exe not found in unpacked installer!" }
           Write-Host "Verified WebView2 inside installer: $($foundWebview.FullName)"
 
-          # 验证 Supermium 核心文件存在
-          $foundSupermium = Get-ChildItem $unpackDir -Recurse | Where-Object { $_.Name -in @('chrome.exe', 'supermium.exe') } | Select-Object -First 1
-          if (-not $foundSupermium) { throw "Verification failed: Supermium browser executable not found in unpacked installer!" }
-          Write-Host "Verified Supermium inside installer: $($foundSupermium.FullName)"
-
           # 3. 递归扫描解包后的全部 .exe 和 .dll，严格门禁 Windows 10+ 专属符号 (如 ProcessPrng)
           python scripts/check-win7-pe.py $unpackDir
           if ($LASTEXITCODE -ne 0) { throw "check-win7-pe.py inspection failed on installer binaries!" }
@@ -245,7 +203,7 @@ jobs:
 
           $manifest = [ordered]@{
             version = $appVersion
-            notes = "Simprint Windows 7 x64 offline compatibility release. Includes bundled Supermium and WebView2 109."
+            notes = "Simprint Windows 7 x64 compatibility release. Downloads pinned Supermium on first use and includes WebView2 109."
             pub_date = $pubDate
             platforms = @{
               "windows-x86_64" = @{

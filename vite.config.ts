@@ -31,6 +31,38 @@ function oklchToCss(lightness: string, chroma: string, hue: string, alpha?: stri
   return `rgba(${rgb.join(',')},${Math.max(0, Math.min(1, opacity))})`;
 }
 
+function replaceLegacyColorMix(css: string) {
+  const colors = new Map<string, string>([
+    ['background', '#ffffff'],
+    ['foreground', '#333333'],
+    ['muted', '#f9fafb'],
+    ['muted-foreground', '#6b7280'],
+    ['accent', '#e0f2fe'],
+    ['accent-foreground', '#1e3a8a'],
+    ['border', '#e5e7eb'],
+    ['input', '#e5e7eb'],
+    ['primary', '#3b82f6'],
+    ['primary-foreground', '#ffffff'],
+    ['destructive', '#ef4444'],
+  ]);
+  for (const match of css.matchAll(/--([\w-]+)\s*:\s*(#[0-9a-f]{3,8})\b/gi)) {
+    colors.set(match[1], match[2]);
+  }
+
+  return css.replace(
+    /color-mix\(in\s+(?:oklab|srgb),\s*var\(--([\w-]+)\)\s+([\d.]+)%\s*,\s*transparent\)/gi,
+    (match, name: string, alpha: string) => {
+      const color = colors.get(name);
+      if (!color) return match;
+      const hex = color.length === 4
+        ? color.replace(/[0-9a-f]/gi, (value) => value + value)
+        : color;
+      const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
+      return `rgba(${channels.join(',')},${Number.parseFloat(alpha) / 100})`;
+    }
+  );
+}
+
 function win7LegacyCssPlugin() {
   return {
     name: 'win7-legacy-css',
@@ -42,12 +74,11 @@ function win7LegacyCssPlugin() {
           typeof asset.source !== 'string'
         )
           continue;
-        asset.source = asset.source
-          .replace(
-            /color-mix\(in oklab,\s*(var\(--[^)]+\)|currentcolor)[^,]*,\s*transparent\)/gi,
-            '$1'
-          )
-          .replace(/color-mix\([^)]*\)/gi, 'currentColor')
+        asset.source = replaceLegacyColorMix(asset.source)
+          // Never leave the function arguments behind. That creates invalid
+          // declarations such as `color: currentColor 5%, transparent`.
+          .replace(/color-mix\([^)]*\)/gi, 'transparent')
+          .replace(/transparent[\d.]+%,transparent\)/gi, 'transparent')
           .replace(/\bin oklab\b/gi, 'in srgb')
           .replace(/\bin lab\b/gi, 'in srgb')
           .replace(
@@ -58,6 +89,8 @@ function win7LegacyCssPlugin() {
             '\n/* Win7/Chromium 109 explicit active-tab color fallback */\n' +
               '[data-slot="tabs-trigger"][data-state="active"],[role="tab"][aria-selected="true"]{color:#333!important}\n' +
               '.dark [data-slot="tabs-trigger"][data-state="active"],.dark [role="tab"][aria-selected="true"]{color:#e5e5e5!important}\n' +
+              '.text-muted-foreground\\/5{color:rgba(107,114,128,.05)!important}\n' +
+              '.dark .text-muted-foreground\\/5{color:rgba(163,163,163,.05)!important}\n' +
               '[data-slot="tabs-trigger"][data-state="active"] svg,[role="tab"][aria-selected="true"] svg{color:inherit;fill:currentColor;stroke:currentColor}\n'
           );
       }

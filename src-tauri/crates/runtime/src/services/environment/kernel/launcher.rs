@@ -117,7 +117,9 @@ pub async fn launch_browser(
         accounts: request.accounts.clone(),
     };
 
-    let mut server_ready = eventbus_manager().start_server(env_id.clone(), Some(launch_config));
+    let mut server_ready = request
+        .use_eventbus
+        .then(|| eventbus_manager().start_server(env_id.clone(), Some(launch_config)));
 
     let browser = spawn_browser_process(
         &request.exe_path,
@@ -150,10 +152,8 @@ pub async fn launch_browser(
         }
     };
 
-    let browser =
-        match wait_for_browser_ready(&env_id, browser, &mut server_ready, &request.user_data_dir)
-            .await
-        {
+    let browser = if let Some(server_ready) = server_ready.as_mut() {
+        match wait_for_browser_ready(&env_id, browser, server_ready, &request.user_data_dir).await {
             Ok(browser) => browser,
             Err(error) => {
                 fail_launch(
@@ -168,7 +168,10 @@ pub async fn launch_browser(
                 .await;
                 return Err(error);
             }
-        };
+        }
+    } else {
+        browser
+    };
 
     let (mut browser, browser_ws_url) = match wait_for_cdp_ready(&env_id, cdp_port, browser).await {
         Ok(ready) => ready,

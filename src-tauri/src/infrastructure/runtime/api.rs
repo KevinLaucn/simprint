@@ -190,6 +190,12 @@ pub struct EnvironmentStartRequest {
     pub window_position: Option<String>,
     pub window_size: Option<String>,
     pub extension_dirs: Option<Vec<String>>,
+    #[serde(default = "default_use_eventbus")]
+    pub use_eventbus: bool,
+}
+
+fn default_use_eventbus() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

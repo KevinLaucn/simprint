@@ -33,6 +33,14 @@ pub struct EnvironmentStartRequest {
     pub window_position: Option<String>,
     pub window_size: Option<String>,
     pub extension_dirs: Option<Vec<String>>,
+    /// Stock Supermium does not contain Simprint's named-pipe EventBus patch.
+    /// Keep the launch path usable without waiting for an impossible handshake.
+    #[serde(default = "default_use_eventbus")]
+    pub use_eventbus: bool,
+}
+
+fn default_use_eventbus() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

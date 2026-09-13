@@ -59,8 +59,16 @@ async fn ensure_supermium_bundled(
         None
     };
 
-    if let Some(exe_path) = find_executable(&kernel_dir) {
-        return Ok(exe_path);
+    // A stale online Chrome directory may still contain chrome.exe. It must
+    // not be reused for the bundled Supermium runtime.
+    let bundle_marker = kernel_dir.join(".simprint-supermium-bundled");
+    if bundle_marker.is_file() {
+        if let Some(exe_path) = find_executable(&kernel_dir) {
+            return Ok(exe_path);
+        }
+    }
+    if kernel_dir.exists() && !kernel_dir.is_dir() {
+        return Err(format!("内核安装路径不是目录: {}", kernel_dir.display()).into());
     }
 
     let bundled_dir = app
@@ -100,6 +108,7 @@ async fn ensure_supermium_bundled(
         fs::remove_dir_all(&kernel_dir)?;
     }
     fs::rename(&staging_dir, &kernel_dir)?;
+    fs::write(&bundle_marker, b"supermium-bundled-v1\n")?;
     let relative_exe = exe_path
         .strip_prefix(&staging_dir)
         .map_err(|_| "解析 Supermium 可执行文件路径失败")?;

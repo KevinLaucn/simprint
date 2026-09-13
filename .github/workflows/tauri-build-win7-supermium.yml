@@ -131,7 +131,9 @@ jobs:
             $_.Name -ieq "chrome.exe" -or $_.Name -ieq "supermium.exe"
           } | Select-Object -First 1
           if (-not $supermiumExe) { throw "Supermium archive does not contain chrome.exe or supermium.exe" }
-          Copy-Item (Join-Path $supermiumExe.Directory.FullName '*') $target -Recurse -Force
+          # Keep the complete extracted tree. Some Supermium DLLs/resources
+          # may sit beside the executable's directory.
+          Copy-Item (Join-Path $extract '*') $target -Recurse -Force
           if (-not (Get-ChildItem $target -Recurse -File | Where-Object {
             $_.Name -ieq "chrome.exe" -or $_.Name -ieq "supermium.exe"
           })) { throw "Bundled Supermium resource is incomplete" }

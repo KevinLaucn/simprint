@@ -498,6 +498,7 @@ async fn prepare_start_request(
         window_position,
         window_size,
         extension_dirs,
+        use_eventbus: !cfg!(feature = "win7-offline"),
     })
 }
 

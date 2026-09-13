@@ -269,10 +269,42 @@ $launcher = Replace-RegexOnce $launcher `
   $stopReplacement `
   'Win7 Supermium EventBus-free stop path'
 
+$refreshProxyReplacement = @'
+pub async fn refresh_proxy(
+    env_uuid: String,
+    proxy: Option<super::types::BrowserProxyConfigPayload>,
+    events: EventPublisher,
+) -> Result<()> {
+    let env_id = env_uuid.trim().to_string();
+    let manager = eventbus_manager();
+
+    if !manager.is_connected(&env_id).await {
+        return Err(RuntimeError::Internal(
+            "Supermium 代理在启动时通过 Chromium 参数应用；运行中热切换代理需要重启环境后生效"
+                .into(),
+        ));
+    }
+
+    let proxy_payload = match proxy {
+        Some(proxy) => serde_json::to_vec(&proxy)
+            .map_err(|error| RuntimeError::Serialization(error.to_string()))?,
+        None => b"null".to_vec(),
+    };
+
+    manager.send_event(&env_id, Topic::ProxySet, proxy_payload).await?;
+    let _ = events.emit(
+        "environment.proxy_refreshed",
+        &serde_json::json!({ "env_uuid": env_id }),
+    );
+    Ok(())
+}
+
+pub async fn set_window_bounds
+'@
 $launcher = Replace-RegexOnce $launcher `
-  'if !manager\.is_connected\(&env_id\)\.await \{\s*return Err\(RuntimeError::Internal\(format!\("环境 \{\} 未连接", env_id\)\)\);\s*\}' `
-  'if !manager.is_connected(&env_id).await { return Err(RuntimeError::Internal("Supermium 代理在启动时通过 Chromium 参数应用；运行中热切换代理需要重启环境后生效".into())); }' `
-  'Win7 Supermium proxy refresh error path'
+  'pub async fn refresh_proxy\(.*?\n\}\n\npub async fn set_window_bounds' `
+  $refreshProxyReplacement `
+  'Win7 Supermium proxy refresh behavior'
 
 $connectedReplacement = @'
 pub async fn get_connected_environments(
@@ -290,9 +322,11 @@ pub async fn get_connected_environments(
     env_ids.dedup();
     Ok(env_ids)
 }
+
+pub async fn get_cdp_endpoint
 '@
 $launcher = Replace-RegexOnce $launcher `
-  'pub async fn get_connected_environments\(\) -> Result<Vec<String>> \{.*?\n\}' `
+  'pub async fn get_connected_environments\(\) -> Result<Vec<String>> \{.*?\n\}\n\npub async fn get_cdp_endpoint' `
   $connectedReplacement `
   'Win7 Supermium connected-environment fallback'
 
@@ -537,7 +571,7 @@ $kernelMod = Replace-RegexOnce $kernelMod `
   'let result = close_rpa_tab(env_uuid, position, self.cdp_endpoint_manager.clone()).await?;' `
   'Win7 Supermium close RPA tab call'
 $kernelMod = Replace-RegexOnce $kernelMod `
-  'pub async fn get_connected_env_count\(&self\) -> usize \{.*?\n\s*\}' `
+  'pub async fn get_connected_env_count\(&self\) -> usize \{\s*match crate::infrastructure::eventbus::get_eventbus_manager\(\) \{\s*Some\(manager\) => manager\.connected_env_count\(\)\.await,\s*None => 0,\s*\}\s*\}' `
   'pub async fn get_connected_env_count(&self) -> usize { self.cdp_endpoint_manager.env_ids().await.len() }' `
   'Win7 Supermium connected count fallback'
 [IO.File]::WriteAllText($kernelModPath, $kernelMod, $utf8NoBom)

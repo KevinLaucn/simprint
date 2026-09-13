@@ -209,4 +209,10 @@ if (-not (Test-Path $runtimeV2Patch)) {
 }
 & $runtimeV2Patch
 
-Write-Host 'Applied Win7 native-frame/titlebar, sidebar contrast, direct bundled kernel, detailed errors, and Supermium runtime v2 compatibility overlays.'
+$runtimeV3Patch = Join-Path $rootDir 'scripts/patch-win7-supermium-runtime-v3.ps1'
+if (-not (Test-Path $runtimeV3Patch)) {
+  throw "Win7 Supermium runtime v3 patch script was not found: $runtimeV3Patch"
+}
+& $runtimeV3Patch
+
+Write-Host 'Applied Win7 native-frame/titlebar, sidebar contrast, direct bundled kernel, detailed errors, and Supermium runtime v3 compatibility overlays.'

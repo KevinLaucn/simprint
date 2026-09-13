@@ -146,10 +146,24 @@ fn resolve_environment_proxy_config(
     env_uuid: &str,
     remote_proxy: Option<EnvironmentProxyLike>,
 ) -> Option<ProxyConfig> {
+    let remote_proxy = build_tauri_proxy_config(remote_proxy);
     match resolve_local_proxy_config(app, env_uuid) {
         LocalProxyResolution::Resolved(proxy) => Some(proxy),
-        LocalProxyResolution::MissingBindingTarget => None,
-        LocalProxyResolution::NoBinding => build_tauri_proxy_config(remote_proxy),
+        LocalProxyResolution::MissingBindingTarget => {
+            if remote_proxy.is_some() {
+                log::warn!(
+                    "local proxy binding is stale for env_uuid={}; falling back to configured remote proxy",
+                    env_uuid
+                );
+            } else {
+                log::warn!(
+                    "local proxy binding is stale for env_uuid={} and no remote proxy is configured",
+                    env_uuid
+                );
+            }
+            remote_proxy
+        }
+        LocalProxyResolution::NoBinding => remote_proxy,
     }
 }
 
@@ -202,8 +216,12 @@ enum LocalProxyResolution {
 
 fn build_tauri_proxy_config(proxy: Option<EnvironmentProxyLike>) -> Option<ProxyConfig> {
     let proxy = proxy?;
-    let host = proxy.host?;
+    let host = proxy.host?.trim().to_string();
     let port = proxy.port?;
+    if host.is_empty() || port == 0 {
+        log::warn!("ignoring invalid remote proxy configuration: host/port is empty");
+        return None;
+    }
 
     Some(ProxyConfig {
         host,

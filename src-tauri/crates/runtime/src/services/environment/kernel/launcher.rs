@@ -1,4 +1,5 @@
 use super::cdp::CdpEndpointManager;
+use super::adapter::SupermiumAdapter;
 use super::job::JobManager;
 use super::types::{
     BatchLaunchResult, CdpEndpointResponse, EnvironmentStartRequest, RpaTabCloseResult,
@@ -53,6 +54,28 @@ pub async fn launch_browser(
     }
     status_manager.set_status(&env_id, EnvironmentStatus::Initializing).await;
     status_manager.set_status(&env_id, EnvironmentStatus::Starting).await;
+
+    let capabilities = SupermiumAdapter::capabilities();
+    let applied = capabilities
+        .iter()
+        .filter(|item| !matches!(item.capability, super::adapter::FingerprintCapability::Unsupported))
+        .map(|item| item.name)
+        .collect::<Vec<_>>();
+    let unsupported = capabilities
+        .iter()
+        .filter(|item| matches!(item.capability, super::adapter::FingerprintCapability::Unsupported))
+        .map(|item| item.name)
+        .collect::<Vec<_>>();
+    log_info(
+        "kernel",
+        format!(
+            "adapter=supermium-win7 env_uuid={} use_eventbus={} capabilities_applied={} capabilities_unsupported={}",
+            env_id,
+            request.use_eventbus,
+            applied.join(","),
+            unsupported.join(",")
+        ),
+    );
 
     let path = Path::new(&request.exe_path);
     if !path.exists() {

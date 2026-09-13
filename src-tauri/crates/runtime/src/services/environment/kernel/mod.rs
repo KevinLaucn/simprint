@@ -1,4 +1,5 @@
 pub mod cdp;
+pub mod adapter;
 pub mod job;
 pub mod launcher;
 pub mod types;

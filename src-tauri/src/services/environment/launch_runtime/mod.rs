@@ -133,7 +133,7 @@ impl EnvironmentLaunchRuntimeService {
             cache_path: launch_paths.cache_path.clone(),
             cookies: normalize_cookies(detail.cookies),
             urls: normalize_urls(detail.urls),
-            proxy: resolve_environment_proxy_config(&app, &env.uuid, detail.proxy),
+            proxy: resolve_environment_proxy_config(&app, &env.uuid, detail.proxy)?,
             fingerprint_config: Some(fingerprint_config),
             accounts: normalize_accounts(detail.accounts),
             extensions: normalize_extensions(detail.extensions),
@@ -145,25 +145,26 @@ fn resolve_environment_proxy_config(
     app: &AppHandle,
     env_uuid: &str,
     remote_proxy: Option<EnvironmentProxyLike>,
-) -> Option<ProxyConfig> {
-    let remote_proxy = build_tauri_proxy_config(remote_proxy);
+) -> Result<Option<ProxyConfig>> {
+    let remote_proxy = build_tauri_proxy_config(remote_proxy)?;
     match resolve_local_proxy_config(app, env_uuid) {
-        LocalProxyResolution::Resolved(proxy) => Some(proxy),
+        LocalProxyResolution::Resolved(proxy) => Ok(Some(proxy)),
         LocalProxyResolution::MissingBindingTarget => {
-            if remote_proxy.is_some() {
+            if let Some(remote_proxy) = remote_proxy {
                 log::warn!(
                     "local proxy binding is stale for env_uuid={}; falling back to configured remote proxy",
                     env_uuid
                 );
+                Ok(Some(remote_proxy))
             } else {
-                log::warn!(
-                    "local proxy binding is stale for env_uuid={} and no remote proxy is configured",
+                Err(format!(
+                    "环境 {} 的本地代理绑定已失效，且没有可回退的远程代理；已阻止直连启动",
                     env_uuid
-                );
+                )
+                .into())
             }
-            remote_proxy
         }
-        LocalProxyResolution::NoBinding => remote_proxy,
+        LocalProxyResolution::NoBinding => Ok(remote_proxy),
     }
 }
 
@@ -214,22 +215,23 @@ enum LocalProxyResolution {
     Resolved(ProxyConfig),
 }
 
-fn build_tauri_proxy_config(proxy: Option<EnvironmentProxyLike>) -> Option<ProxyConfig> {
-    let proxy = proxy?;
-    let host = proxy.host?.trim().to_string();
-    let port = proxy.port?;
+fn build_tauri_proxy_config(proxy: Option<EnvironmentProxyLike>) -> Result<Option<ProxyConfig>> {
+    let Some(proxy) = proxy else {
+        return Ok(None);
+    };
+    let host = proxy.host.unwrap_or_default().trim().to_string();
+    let port = proxy.port.unwrap_or(0);
     if host.is_empty() || port == 0 {
-        log::warn!("ignoring invalid remote proxy configuration: host/port is empty");
-        return None;
+        return Err("代理已配置但地址或端口无效；已阻止直连启动".into());
     }
 
-    Some(ProxyConfig {
+    Ok(Some(ProxyConfig {
         host,
         port,
         proxy_type: proxy.proxy_type.unwrap_or_else(|| "http".to_string()),
         username: proxy.username,
         password: proxy.password.map(crate::infrastructure::proxy::types::ProxyPassword::plain),
-    })
+    }))
 }
 
 fn normalize_accounts(accounts: Option<Vec<AccountInfo>>) -> Option<Vec<AccountInfo>> {

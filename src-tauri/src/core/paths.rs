@@ -37,20 +37,32 @@ pub struct PathManager;
 impl PathManager {
     /// 默认根目录（不受 bootstrap 影响）
     pub fn get_default_root_dir() -> Result<PathBuf> {
-        let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("无法获取系统基础目录"))?;
+        #[cfg(all(target_os = "windows", feature = "win7-offline"))]
+        {
+            // Win7 离线版必须自包含：日志、浏览器缓存和运行数据都放在
+            // 安装目录，避免依赖 %LOCALAPPDATA%（也便于现场收集日志）。
+            let exe_dir = std::env::current_exe()?
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| anyhow!("无法确定程序安装目录"))?;
+            return Ok(exe_dir);
+        }
 
         #[cfg(target_os = "windows")]
         {
+            let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("无法获取系统基础目录"))?;
             Ok(base_dirs.data_local_dir().join(APP_DIR_NAME))
         }
 
         #[cfg(target_os = "macos")]
         {
+            let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("无法获取系统基础目录"))?;
             Ok(base_dirs.config_dir().join(APP_DIR_NAME))
         }
 
         #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
         {
+            let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("无法获取系统基础目录"))?;
             Ok(base_dirs.config_dir().join(APP_DIR_NAME))
         }
     }

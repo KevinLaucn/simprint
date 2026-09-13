@@ -61,6 +61,9 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 function replaceLegacyColorMix(css: string) {
+  // Resolve against the first declaration for each variable. In the generated
+  // stylesheet :root precedes .dark; letting later .dark declarations overwrite
+  // these values would bake dark colors into light-mode legacy fallbacks.
   const variables = new Map<string, string>([
     ['background', '#ffffff'],
     ['foreground', '#333333'],
@@ -82,7 +85,7 @@ function replaceLegacyColorMix(css: string) {
   ]);
 
   for (const match of css.matchAll(/--([\w-]+)\s*:\s*([^;{}]+);/g)) {
-    variables.set(match[1], match[2].trim());
+    if (!variables.has(match[1])) variables.set(match[1], match[2].trim());
   }
 
   const resolveVariableColor = (name: string, seen = new Set<string>()): string | undefined => {
@@ -100,8 +103,10 @@ function replaceLegacyColorMix(css: string) {
     );
   };
 
+  // Tailwind minifies `var(--token) 15%` to `var(--token)15%`, so whitespace
+  // before the percentage must be optional for WebView2 109 conversion.
   let output = css.replace(
-    /color-mix\(in\s+(?:oklab|srgb),\s*var\(--([\w-]+)\)\s+([\d.]+)%\s*,\s*transparent\s*\)/gi,
+    /color-mix\(in\s+(?:oklab|srgb),\s*var\(--([\w-]+)\)\s*([\d.]+)%\s*,\s*transparent\s*\)/gi,
     (_match, name: string, alpha: string) => {
       const color = resolveVariableColor(name);
       return color ? hexToRgba(color, Number.parseFloat(alpha) / 100) : `var(--${name})`;
@@ -109,7 +114,7 @@ function replaceLegacyColorMix(css: string) {
   );
 
   output = output.replace(
-    /color-mix\(in\s+(?:oklab|srgb),\s*transparent\s*,\s*var\(--([\w-]+)\)\s+([\d.]+)%\s*\)/gi,
+    /color-mix\(in\s+(?:oklab|srgb),\s*transparent\s*,\s*var\(--([\w-]+)\)\s*([\d.]+)%\s*\)/gi,
     (_match, name: string, alpha: string) => {
       const color = resolveVariableColor(name);
       return color ? hexToRgba(color, Number.parseFloat(alpha) / 100) : `var(--${name})`;
@@ -117,12 +122,12 @@ function replaceLegacyColorMix(css: string) {
   );
 
   output = output.replace(
-    /color-mix\(in\s+(?:oklab|srgb),\s*currentColor\s+[\d.]+%\s*,\s*transparent\s*\)/gi,
+    /color-mix\(in\s+(?:oklab|srgb),\s*currentColor\s*[\d.]+%\s*,\s*transparent\s*\)/gi,
     'currentColor'
   );
 
   output = output.replace(
-    /color-mix\(in\s+(?:oklab|srgb),\s*(#[0-9a-f]{3,8})\s+([\d.]+)%\s*,\s*transparent\s*\)/gi,
+    /color-mix\(in\s+(?:oklab|srgb),\s*(#[0-9a-f]{3,8})\s*([\d.]+)%\s*,\s*transparent\s*\)/gi,
     (match, rawColor: string, alpha: string) => {
       const color = normalizeHexColor(rawColor);
       return color ? hexToRgba(color, Number.parseFloat(alpha) / 100) : match;

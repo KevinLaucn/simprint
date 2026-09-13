@@ -58,31 +58,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Resolve or auto-generate release signing keys
+      - name: Validate release signing keys
         shell: powershell
         run: |
-          $pubKey = $env:TAURI_UPDATER_PUBLIC_KEY
-          $privKey = $env:TAURI_SIGNING_PRIVATE_KEY
-          $password = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-
-          if ([string]::IsNullOrWhiteSpace($pubKey) -or [string]::IsNullOrWhiteSpace($privKey)) {
-            Write-Host "GitHub Secrets for updater signing not found. Auto-generating dedicated Win7 updater keypair..."
-            $keyPath = Join-Path $env:RUNNER_TEMP "tauri_win7_autogen_key"
-            npx --yes @tauri-apps/cli@2.11.4 signer generate -p "" --ci -w "$keyPath"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to auto-generate Tauri updater keypair" }
-
-            $privKey = [IO.File]::ReadAllText($keyPath).Trim()
-            $pubKey = [IO.File]::ReadAllText("$keyPath.pub").Trim()
-            $password = ""
-            Write-Host "Successfully generated dedicated signing keypair."
-          } else {
-            Write-Host "Using provided repository secrets for updater signing."
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
+            throw "TAURI_UPDATER_PUBLIC_KEY is missing. Configure the repository secret before building Win7 releases."
           }
-
-          # Export into GITHUB_ENV so all downstream steps (prepare-tauri-config and tauri-action) receive the resolved keys
-          "TAURI_UPDATER_PUBLIC_KEY=$pubKey" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TAURI_SIGNING_PRIVATE_KEY=$privKey" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_PRIVATE_KEY is missing. Configure the repository secret before building Win7 releases."
+          }
+          if ($null -eq $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            throw "TAURI_KEY_PASSWORD is missing. Set it to an empty secret if the key has no password."
+          }
+          Write-Host "Using the stable repository updater signing key."
 
       - name: Bundle Microsoft WebView2 109 fixed runtime
         shell: powershell
@@ -156,8 +144,25 @@ jobs:
       - name: Prepare Win7 Tauri config with public key injection
         run: node deploy/prepare-tauri-config.mjs win7-offline x86_64-win7-windows-msvc
 
+      - name: Prepare Win7 build version
+        shell: powershell
+        env:
+          VERSION: 0.1.${{ github.run_number }}
+        run: node deploy/prepare-version.mjs
+
       - name: Install PE inspection dependency
         run: python -m pip install pefile
+
+      - name: Hide rustup for the Win7 Tier-3 target
+        shell: powershell
+        run: |
+          $rustup = Get-Command rustup.exe -ErrorAction SilentlyContinue
+          if ($rustup) {
+            $hidden = "$($rustup.Source).simprint-win7-hidden"
+            if (Test-Path $hidden) { Remove-Item $hidden -Force }
+            Move-Item -LiteralPath $rustup.Source -Destination $hidden -Force
+            Write-Host "Temporarily hid rustup.exe before invoking Tauri CLI."
+          }
 
       - name: Build Win7 Tauri installer
         uses: tauri-apps/tauri-action@v0
@@ -233,12 +238,13 @@ jobs:
           Write-Host "Signature extracted: $sigContent"
 
           # 5. 生成专用的 latest-win7.json 独立更新清单
-          $tag = "win7-x64-build-${{ github.run_number }}"
+          $tag = "win7-latest"
           $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/Simprint-Win7-x64.exe"
+          $appVersion = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
 
           $manifest = [ordered]@{
-            version = "0.1.0"
+            version = $appVersion
             notes = "Simprint Windows 7 x64 offline compatibility release. Includes bundled Supermium and WebView2 109."
             pub_date = $pubDate
             platforms = @{
@@ -270,13 +276,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          $tag = "win7-x64-build-${{ github.run_number }}"
-          gh release create $tag `
+          $tag = "win7-latest"
+          gh release view $tag --repo "${{ github.repository }}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Simprint Win7 latest" --notes "Rolling Windows 7 x64 compatibility release."
+          }
+          gh release upload $tag `
             "dist-win7/Simprint-Win7-x64.exe" `
             "dist-win7/Simprint-Win7-x64.exe.sig" `
             "dist-win7/latest-win7.json" `
             --repo "${{ github.repository }}" `
-            --target "${{ github.sha }}" `
-            --title "Simprint Win7 x64 build ${{ github.run_number }}" `
-            --notes "Windows 7 x64 compatibility build with standalone latest-win7.json updater channel. Includes WebView2 109 fixed runtime and bundled Supermium v144-r5." `
-            --prerelease
+            --clobber

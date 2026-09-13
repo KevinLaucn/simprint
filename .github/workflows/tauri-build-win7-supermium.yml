@@ -58,15 +58,31 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate release secrets
+      - name: Resolve or auto-generate release signing keys
         shell: powershell
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
-            throw "TAURI_UPDATER_PUBLIC_KEY is required for signed updater builds"
+          $pubKey = $env:TAURI_UPDATER_PUBLIC_KEY
+          $privKey = $env:TAURI_SIGNING_PRIVATE_KEY
+          $password = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+
+          if ([string]::IsNullOrWhiteSpace($pubKey) -or [string]::IsNullOrWhiteSpace($privKey)) {
+            Write-Host "GitHub Secrets for updater signing not found. Auto-generating dedicated Win7 updater keypair..."
+            $keyPath = Join-Path $env:RUNNER_TEMP "tauri_win7_autogen_key"
+            npx --yes @tauri-apps/cli@2.11.4 signer generate -p "" --ci -w "$keyPath"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to auto-generate Tauri updater keypair" }
+
+            $privKey = [IO.File]::ReadAllText($keyPath).Trim()
+            $pubKey = [IO.File]::ReadAllText("$keyPath.pub").Trim()
+            $password = ""
+            Write-Host "Successfully generated dedicated signing keypair."
+          } else {
+            Write-Host "Using provided repository secrets for updater signing."
           }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "TAURI_SIGNING_PRIVATE_KEY is required for signing updater artifacts"
-          }
+
+          # Export into GITHUB_ENV so all downstream steps (prepare-tauri-config and tauri-action) receive the resolved keys
+          "TAURI_UPDATER_PUBLIC_KEY=$pubKey" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAURI_SIGNING_PRIVATE_KEY=$privKey" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Bundle Microsoft WebView2 109 fixed runtime
         shell: powershell
@@ -148,8 +164,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SIMPRINT_WEBVIEW_MODE: win7-offline
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           args: --target x86_64-win7-windows-msvc --features production,win7-offline

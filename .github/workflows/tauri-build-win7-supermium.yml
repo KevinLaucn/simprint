@@ -127,6 +127,10 @@ jobs:
             Write-Host "Temporarily hid rustup.exe before invoking Tauri CLI."
           }
 
+      - name: Apply Win7 UI overlay and build frontend
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/before-build-win7.ps1
+
       - name: Build Win7 Tauri installer
         uses: tauri-apps/tauri-action@v0
         env:

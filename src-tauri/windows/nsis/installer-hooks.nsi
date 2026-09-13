@@ -28,6 +28,9 @@ Var RuntimePathRoot
   FileClose $0
 
 NoPromoFile:
+  ; Windows 7 compatibility: explicitly recreate shortcuts with application icon
+  CreateShortCut "$DESKTOP\Simprint.lnk" "$INSTDIR\simprint.exe" "" "$INSTDIR\simprint.exe" 0
+  CreateShortCut "$SMPROGRAMS\$StartMenuGroup\Simprint.lnk" "$INSTDIR\simprint.exe" "" "$INSTDIR\simprint.exe" 0
 !macroend
 
 ; 卸载前钩子：递归清理安装目录内所有文件与子目录（含运行时生成内容），卸载程序自身由后续步骤或重启后清理

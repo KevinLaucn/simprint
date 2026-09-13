@@ -281,7 +281,7 @@ impl WindowService {
                 .center()
                 .decorations(false)
                 .visible(false)
-                .drag_and_drop(false)
+                .disable_drag_drop_handler()
                 .devtools(devtools_enabled)
                 .build()?;
 
@@ -316,7 +316,7 @@ impl WindowService {
                 .inner_size(400.0, 600.0)
                 .resizable(true)
                 .decorations(false)
-                .drag_and_drop(false)
+                .disable_drag_drop_handler()
                 .devtools(devtools_enabled)
                 .build()?;
 

@@ -1,0 +1,189 @@
+name: tauri-build-win7-supermium-offline
+
+on:
+  push:
+    branches:
+      - win7
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: win7-supermium-offline
+  cancel-in-progress: true
+
+jobs:
+  build-win7:
+    runs-on: windows-2025
+
+    env:
+      ENV_NAME: production
+      WIN7_TARGET: x86_64-win7-windows-msvc
+      RUST_TOOLCHAIN: nightly-2026-09-01
+      WEBVIEW_VERSION: 109.0.1518.78
+      WEBVIEW_URL: https://github.com/westinyang/WebView2RuntimeArchive/releases/download/109.0.1518.78/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64.cab
+      SUPERMIUM_VERSION: v144-r5
+      SUPERMIUM_URL: https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip
+      SUPERMIUM_SHA256: 805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca
+
+    steps:
+      - name: Checkout Simprint
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup pinned Rust nightly with rust-src
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rust-src
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bundle Microsoft WebView2 109 fixed runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cab = Join-Path $env:RUNNER_TEMP "webview2-109-x64.cab"
+          $extract = Join-Path $env:RUNNER_TEMP "webview2-109-extract"
+          $target = "src-tauri/webview-fixed/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64"
+
+          Remove-Item $cab -Force -ErrorAction SilentlyContinue
+          & curl.exe -L --fail --retry 5 --retry-delay 2 --connect-timeout 30 --output $cab $env:WEBVIEW_URL
+          if ($LASTEXITCODE -ne 0) { throw "WebView2 download failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path $cab)) { throw "WebView2 CAB was not downloaded" }
+          $cabInfo = Get-Item $cab
+          if ($cabInfo.Length -lt 150MB) { throw "WebView2 CAB is unexpectedly small: $($cabInfo.Length) bytes" }
+
+          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & expand.exe '-F:*' $cab $extract | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "expand.exe failed with exit code $LASTEXITCODE" }
+
+          $webviewExe = Get-ChildItem $extract -Recurse -File -Filter "msedgewebview2.exe" | Select-Object -First 1
+          if (-not $webviewExe) { throw "msedgewebview2.exe not found after extracting WebView2 109" }
+
+          $sig = Get-AuthenticodeSignature $webviewExe.FullName
+          if ($sig.Status -ne 'Valid') { throw "WebView2 executable signature is not valid: $($sig.Status)" }
+          if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {
+            throw "WebView2 executable is not signed by Microsoft"
+          }
+
+          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item (Join-Path $webviewExe.Directory.FullName '*') $target -Recurse -Force
+          Write-Host "Bundled WebView2: $($webviewExe.Directory.FullName)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+
+      - name: Bundle pinned Supermium portable browser
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "supermium-v144-r5-x64.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "supermium-extract"
+          $target = "src-tauri/resources/supermium"
+
+          Remove-Item $zip -Force -ErrorAction SilentlyContinue
+          & curl.exe -L --fail --retry 5 --retry-delay 2 --connect-timeout 30 --output $zip $env:SUPERMIUM_URL
+          if ($LASTEXITCODE -ne 0) { throw "Supermium download failed with exit code $LASTEXITCODE" }
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:SUPERMIUM_SHA256.ToLowerInvariant()) {
+            throw "Supermium SHA256 mismatch: expected=$env:SUPERMIUM_SHA256 actual=$actual"
+          }
+
+          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+
+          $browserExe = Get-ChildItem $extract -Recurse -File |
+            Where-Object { $_.Name -eq 'chrome.exe' } |
+            Select-Object -First 1
+          if (-not $browserExe) {
+            $browserExe = Get-ChildItem $extract -Recurse -File |
+              Where-Object { $_.Name -eq 'supermium.exe' } |
+              Select-Object -First 1
+          }
+          if (-not $browserExe) { throw "Supermium executable not found in pinned archive" }
+
+          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item (Join-Path $browserExe.Directory.FullName '*') $target -Recurse -Force
+          Write-Host "Bundled Supermium root: $($browserExe.Directory.FullName)"
+
+      - name: Install PE inspection dependency
+        run: python -m pip install pefile
+
+      - name: Use Win7 fixed Tauri config
+        shell: powershell
+        run: Copy-Item "src-tauri/tauri.conf.win7.json" "src-tauri/tauri.conf.json" -Force
+
+      - name: Build Win7 Tauri installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: .
+          args: --target x86_64-win7-windows-msvc --features production,win7-offline
+
+      - name: Reject ProcessPrng in Simprint executable
+        shell: powershell
+        run: |
+          $appExe = "src-tauri/target/$env:WIN7_TARGET/release/simprint.exe"
+          if (-not (Test-Path $appExe)) { throw "Win7 simprint.exe was not produced" }
+          python scripts/check-win7-pe.py $appExe
+
+      - name: Collect installer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "dist-win7"
+          Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $nsisDir = "src-tauri/target/$env:WIN7_TARGET/release/bundle/nsis"
+          $installer = Get-ChildItem $nsisDir -Filter *.exe -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer not found under $nsisDir" }
+
+          $finalExe = Join-Path $out "Simprint-Win7-x64.exe"
+          Copy-Item $installer.FullName $finalExe -Force
+          $info = Get-Item $finalExe
+          Write-Host ("Installer: {0}; size: {1:N1} MB" -f $info.FullName, ($info.Length / 1MB))
+
+      - name: Upload Win7 installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Simprint-Win7-x64
+          path: dist-win7/Simprint-Win7-x64.exe
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Win7 prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "win7-x64-build-${{ github.run_number }}"
+          gh release create $tag `
+            "dist-win7/Simprint-Win7-x64.exe" `
+            --repo "${{ github.repository }}" `
+            --target "${{ github.sha }}" `
+            --title "Simprint Win7 x64 build ${{ github.run_number }}" `
+            --notes "Windows 7 x64 compatibility build. Includes WebView2 109 fixed runtime and bundled Supermium files. Automatic updater is disabled for this compatibility build." `
+            --prerelease

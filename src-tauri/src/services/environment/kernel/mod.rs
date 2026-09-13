@@ -29,6 +29,30 @@ pub use types::{
 /// 内核服务
 pub struct KernelService;
 
+/// Windows 7 固定离线版直接使用安装包内自带的 Supermium，不进行任何内核下载。
+#[cfg(feature = "win7-offline")]
+fn bundled_supermium_executable() -> Result<std::path::PathBuf> {
+    let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
+    let app_dir = exe
+        .parent()
+        .ok_or_else(|| "获取应用程序目录失败")?
+        .to_path_buf();
+    let candidates = [
+        app_dir.join("browser").join("supermium"),
+        app_dir.join("resources").join("supermium"),
+        app_dir.join("resources").join("browser").join("supermium"),
+    ];
+    for dir in &candidates {
+        for name in ["chrome.exe", "supermium.exe"] {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(format!("未找到内置 Supermium 浏览器：尝试路径 {:?}", candidates).into())
+}
+
 async fn record_ready_installation(
     app: &tauri::AppHandle,
     kernel_id: &str,
@@ -91,6 +115,25 @@ impl KernelService {
         }
 
         let _prepare_guard = state::acquire_kernel_prepare_lock(&kernel_id).await;
+
+        #[cfg(feature = "win7-offline")]
+        {
+            if let Ok(exe_path) = bundled_supermium_executable() {
+                utils::emit_status(
+                    status_emitter.as_ref(),
+                    &env_uuid,
+                    &install_dir_name,
+                    EnvironmentStatus::Ready,
+                    Some("Supermium 固定内核已就绪"),
+                    None,
+                    None,
+                    None,
+                );
+                record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-fixed").await;
+                return Ok(exe_path.to_string_lossy().to_string());
+            }
+        }
+
         let base = utils::resolve_profiles_base(&app, &profiles_path)?;
         let kernel_dir = utils::resolve_kernel_install_dir(&base, &install_dir_name)?;
         let exe_path = kernel_dir.join(utils::exe_name());

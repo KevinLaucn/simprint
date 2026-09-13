@@ -1,0 +1,7 @@
+# Windows 7 is a Rust Tier-3 target and rustup does not ship prebuilt std for it.
+# The Win7 CI uses nightly + rust-src; Cargo builds std for this target automatically.
+[unstable]
+build-std = ["std"]
+
+[target.x86_64-win7-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

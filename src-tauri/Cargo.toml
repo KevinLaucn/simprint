@@ -106,3 +106,5 @@ all = "warn"
 
 [features]
 production = ["tauri/custom-protocol", "runtime/production"]
+# Fixed, self-contained Windows 7 build. Runtime update/download paths are disabled at runtime.
+win7-offline = []

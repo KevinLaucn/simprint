@@ -5,6 +5,9 @@
     },
     "fixed-runtime": {
       "file": "latest-fixed.json"
+    },
+    "win7-offline": {
+      "file": "latest-win7.json"
     }
   },
   "targets": [
@@ -37,6 +40,11 @@
       "channel": "fixed-runtime",
       "keys": ["windows-i686", "windows-i686-nsis"],
       "asset": "Simprint_{version}_x86-full-setup.exe"
+    },
+    {
+      "channel": "win7-offline",
+      "keys": ["windows-x86_64", "windows-x86_64-nsis"],
+      "asset": "Simprint_{version}_x64-win7-setup.exe"
     }
   ]
 }

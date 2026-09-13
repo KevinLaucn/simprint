@@ -19,6 +19,7 @@ jobs:
 
     env:
       ENV_NAME: production
+      SIMPRINT_WEBVIEW_MODE: win7-offline
       WIN7_TARGET: x86_64-win7-windows-msvc
       RUST_TOOLCHAIN: nightly-2026-09-01
       WEBVIEW_VERSION: 109.0.1518.78
@@ -26,6 +27,9 @@ jobs:
       SUPERMIUM_VERSION: v144-r5
       SUPERMIUM_URL: https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip
       SUPERMIUM_SHA256: 805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
     steps:
       - name: Checkout Simprint
@@ -53,6 +57,16 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Validate release secrets
+        shell: powershell
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
+            throw "TAURI_UPDATER_PUBLIC_KEY is required for signed updater builds"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is required for signing updater artifacts"
+          }
 
       - name: Bundle Microsoft WebView2 109 fixed runtime
         shell: powershell
@@ -123,29 +137,25 @@ jobs:
           Copy-Item (Join-Path $browserExe.Directory.FullName '*') $target -Recurse -Force
           Write-Host "Bundled Supermium root: $($browserExe.Directory.FullName)"
 
+      - name: Prepare Win7 Tauri config with public key injection
+        run: node deploy/prepare-tauri-config.mjs win7-offline x86_64-win7-windows-msvc
+
       - name: Install PE inspection dependency
         run: python -m pip install pefile
-
-      - name: Use Win7 fixed Tauri config
-        shell: powershell
-        run: Copy-Item "src-tauri/tauri.conf.win7.json" "src-tauri/tauri.conf.json" -Force
 
       - name: Build Win7 Tauri installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SIMPRINT_WEBVIEW_MODE: win7-offline
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           projectPath: .
           args: --target x86_64-win7-windows-msvc --features production,win7-offline
 
-      - name: Reject ProcessPrng in Simprint executable
-        shell: powershell
-        run: |
-          $appExe = "src-tauri/target/$env:WIN7_TARGET/release/simprint.exe"
-          if (-not (Test-Path $appExe)) { throw "Win7 simprint.exe was not produced" }
-          python scripts/check-win7-pe.py $appExe
-
-      - name: Collect installer
+      - name: Collect and verify installer assets
+        id: collect
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
@@ -164,16 +174,81 @@ jobs:
           $info = Get-Item $finalExe
           Write-Host ("Installer: {0}; size: {1:N1} MB" -f $info.FullName, ($info.Length / 1MB))
 
-      - name: Upload Win7 installer artifact
+          # 1. 检查安装包体积（必须大于 150MB，确保 WebView2 和 Supermium 已打包进入）
+          if ($info.Length -lt 150MB) {
+            throw "Installer is unexpectedly small ($($info.Length) bytes). Bundled WebView2 or Supermium may be missing."
+          }
+
+          # 2. 解包安装包以严格验证内嵌组件与 PE 兼容性
+          $unpackDir = Join-Path $env:RUNNER_TEMP "installer-unpack"
+          Remove-Item $unpackDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $unpackDir | Out-Null
+
+          Write-Host "Unpacking installer using 7-Zip to inspect resources..."
+          & 7z.exe x -y -o"$unpackDir" $finalExe | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z unpack failed with exit code $LASTEXITCODE" }
+
+          # 验证 WebView2 109 核心文件存在
+          $foundWebview = Get-ChildItem $unpackDir -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
+          if (-not $foundWebview) { throw "Verification failed: msedgewebview2.exe not found in unpacked installer!" }
+          Write-Host "Verified WebView2 inside installer: $($foundWebview.FullName)"
+
+          # 验证 Supermium 核心文件存在
+          $foundSupermium = Get-ChildItem $unpackDir -Recurse | Where-Object { $_.Name -in @('chrome.exe', 'supermium.exe') } | Select-Object -First 1
+          if (-not $foundSupermium) { throw "Verification failed: Supermium browser executable not found in unpacked installer!" }
+          Write-Host "Verified Supermium inside installer: $($foundSupermium.FullName)"
+
+          # 3. 递归扫描解包后的全部 .exe 和 .dll，严格门禁 Windows 10+ 专属符号 (如 ProcessPrng)
+          python scripts/check-win7-pe.py $unpackDir
+          if ($LASTEXITCODE -ne 0) { throw "check-win7-pe.py inspection failed on installer binaries!" }
+
+          # 4. 提取 Tauri updater 签名文件
+          $sigFile = Get-ChildItem $nsisDir -Filter "$($installer.Name).sig" -File | Select-Object -First 1
+          if (-not $sigFile) {
+            $sigFile = Get-ChildItem $nsisDir -Filter "*.sig" -File | Select-Object -First 1
+          }
+          if (-not $sigFile) {
+            throw "Updater signature file (.sig) not found under $nsisDir"
+          }
+
+          $finalSig = Join-Path $out "Simprint-Win7-x64.exe.sig"
+          Copy-Item $sigFile.FullName $finalSig -Force
+          $sigContent = (Get-Content $finalSig -Raw).Trim()
+          Write-Host "Signature extracted: $sigContent"
+
+          # 5. 生成专用的 latest-win7.json 独立更新清单
+          $tag = "win7-x64-build-${{ github.run_number }}"
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/Simprint-Win7-x64.exe"
+
+          $manifest = [ordered]@{
+            version = "0.1.0"
+            notes = "Simprint Windows 7 x64 offline compatibility release. Includes bundled Supermium and WebView2 109."
+            pub_date = $pubDate
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $sigContent
+                url = $downloadUrl
+              }
+            }
+          }
+
+          $manifestJson = $manifest | ConvertTo-Json -Depth 5
+          $manifestPath = Join-Path $out "latest-win7.json"
+          [IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "Generated updater manifest: $manifestPath"
+          Get-Content $manifestPath
+
+      - name: Upload Win7 release assets artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Simprint-Win7-x64
-          path: dist-win7/Simprint-Win7-x64.exe
+          name: Simprint-Win7-x64-Release
+          path: dist-win7/*
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish Win7 prerelease
+      - name: Publish Win7 Release with manifest and signatures
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,8 +257,10 @@ jobs:
           $tag = "win7-x64-build-${{ github.run_number }}"
           gh release create $tag `
             "dist-win7/Simprint-Win7-x64.exe" `
+            "dist-win7/Simprint-Win7-x64.exe.sig" `
+            "dist-win7/latest-win7.json" `
             --repo "${{ github.repository }}" `
             --target "${{ github.sha }}" `
             --title "Simprint Win7 x64 build ${{ github.run_number }}" `
-            --notes "Windows 7 x64 compatibility build. Includes WebView2 109 fixed runtime and bundled Supermium files. Automatic updater is disabled for this compatibility build." `
+            --notes "Windows 7 x64 compatibility build with standalone latest-win7.json updater channel. Includes WebView2 109 fixed runtime and bundled Supermium v144-r5." `
             --prerelease

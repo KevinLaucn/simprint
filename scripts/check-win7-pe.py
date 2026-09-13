@@ -14,7 +14,12 @@ BLOCKED_IMPORTS = {
 
 def check(path: Path) -> bool:
     print(f"\n[win7-pe] {path}")
-    pe = pefile.PE(str(path), fast_load=False)
+    try:
+        pe = pefile.PE(str(path), fast_load=False)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: failed to parse PE file {path}: {exc}")
+        return False
+
     imports: list[tuple[str, str]] = []
     for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []):
         dll = entry.dll.decode("ascii", "replace")
@@ -40,24 +45,53 @@ def check(path: Path) -> bool:
     return True
 
 
+def collect_targets(arg_path: Path) -> list[Path]:
+    if arg_path.is_file():
+        return [arg_path]
+    if arg_path.is_dir():
+        targets: list[Path] = []
+        for file in arg_path.rglob("*"):
+            if file.is_file() and file.suffix.lower() in (".exe", ".dll"):
+                targets.append(file)
+        return sorted(targets)
+    return []
+
+
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: check-win7-pe.py <exe-or-dll> [...]", file=sys.stderr)
+        print("usage: check-win7-pe.py <exe-or-dll-or-directory> [...]", file=sys.stderr)
         return 2
 
-    ok = True
+    files_to_check: list[Path] = []
     for arg in sys.argv[1:]:
-        path = Path(arg)
-        if not path.is_file():
-            print(f"ERROR: file not found: {path}", file=sys.stderr)
-            ok = False
-            continue
+        arg_path = Path(arg)
+        if not arg_path.exists():
+            print(f"ERROR: path does not exist: {arg_path}", file=sys.stderr)
+            return 1
+        targets = collect_targets(arg_path)
+        if not targets:
+            print(f"WARNING: no PE files (.exe/.dll) found in: {arg_path}")
+        files_to_check.extend(targets)
+
+    if not files_to_check:
+        print("ERROR: no PE binaries were provided for inspection", file=sys.stderr)
+        return 1
+
+    print(f"[win7-pe] scanning {len(files_to_check)} binaries...")
+    ok = True
+    checked_count = 0
+    for file_path in files_to_check:
         try:
-            ok = check(path) and ok
+            passed = check(file_path)
+            if not passed:
+                ok = False
+            checked_count += 1
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR: failed to inspect {path}: {exc}", file=sys.stderr)
+            print(f"ERROR: failed to inspect {file_path}: {exc}", file=sys.stderr)
             ok = False
-        return 0 if ok else 1
+
+    print(f"\n[win7-pe] finished inspection: {checked_count} binaries scanned, all passed: {ok}")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -66,8 +66,9 @@ fn validate_selected_tauri_config(mode: &str) {
     let (expected_install_mode, expected_manifest) = match mode {
         "embedBootstrapper" => ("embedBootstrapper", "latest.json"),
         "fixed-runtime" => ("fixedRuntime", "latest-fixed.json"),
+        "win7-offline" => ("fixedRuntime", "latest-win7.json"),
         other => panic!(
-            "unsupported SIMPRINT_WEBVIEW_MODE '{other}'; expected embedBootstrapper or fixed-runtime"
+            "unsupported SIMPRINT_WEBVIEW_MODE '{other}'; expected embedBootstrapper, fixed-runtime or win7-offline"
         ),
     };
 
@@ -105,6 +106,20 @@ fn validate_selected_tauri_config(mode: &str) {
         assert!(
             normalized_path.trim_end_matches('/').ends_with(expected_runtime_directory),
             "fixed-runtime path '{configured_path}' does not match target architecture directory '{expected_runtime_directory}'"
+        );
+    } else if mode == "win7-offline" {
+        let configured_path = config
+            .bundle
+            .windows
+            .webview_install_mode
+            .path
+            .as_deref()
+            .unwrap_or_else(|| panic!("win7-offline config is missing its WebView path"));
+        let normalized_path = configured_path.replace('\\', "/");
+
+        assert!(
+            normalized_path.trim_end_matches('/').ends_with("Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64"),
+            "win7-offline path '{configured_path}' must point to WebView2 109 x64"
         );
     }
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 const CONFIG_BY_MODE = {
   embedBootstrapper: 'tauri.conf.embed-bootstrapper.json',
   'fixed-runtime': 'tauri.conf.fixed-runtime.json',
+  'win7-offline': 'tauri.conf.win7.json',
 };
 
 const TARGET_BY_NODE_ARCH = {
@@ -19,6 +20,8 @@ const FIXED_RUNTIME_PATH_BY_TARGET = {
     './webview-fixed/Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.arm64/',
   'i686-pc-windows-msvc':
     './webview-fixed/Microsoft.WebView2.FixedVersionRuntime.151.0.4129.78.x86/',
+  'x86_64-win7-windows-msvc':
+    './webview-fixed/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.x64/',
 };
 
 const mode = process.argv[2];
@@ -28,14 +31,14 @@ const target = process.argv[3] || TARGET_BY_NODE_ARCH[process.arch];
 if (!sourceName) {
   throw new Error(
     `[prepare-tauri-config] Unsupported mode "${mode ?? ''}". ` +
-      'Expected embedBootstrapper or fixed-runtime.'
+      'Expected embedBootstrapper, fixed-runtime or win7-offline.'
   );
 }
 
 if (!FIXED_RUNTIME_PATH_BY_TARGET[target]) {
   throw new Error(
     `[prepare-tauri-config] Unsupported Windows target "${target ?? ''}". ` +
-      'Expected x86_64-pc-windows-msvc, aarch64-pc-windows-msvc or i686-pc-windows-msvc.'
+      'Expected x86_64-pc-windows-msvc, aarch64-pc-windows-msvc, i686-pc-windows-msvc or x86_64-win7-windows-msvc.'
   );
 }
 
@@ -45,7 +48,7 @@ const targetPath = path.join(root, 'src-tauri', 'tauri.conf.json');
 const config = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
 const publicKey = process.env.TAURI_UPDATER_PUBLIC_KEY?.trim();
 
-if (mode === 'fixed-runtime') {
+if (mode === 'fixed-runtime' || mode === 'win7-offline') {
   config.bundle.windows.webviewInstallMode.path = FIXED_RUNTIME_PATH_BY_TARGET[target];
 }
 

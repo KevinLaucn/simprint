@@ -55,6 +55,24 @@ if (-not $layoutText.Contains('<AppTitlebar />')) {
 $layoutText = $layoutText.Replace('<AppTitlebar />', '<AppTitlebar showWindowControls={false} />')
 [IO.File]::WriteAllText($appLayout, $layoutText, (New-Object System.Text.UTF8Encoding($false)))
 
+# Git for Windows may materialize checked-out Rust sources as CRLF. The runtime
+# overlay intentionally matches normalized LF source so its structural guards
+# remain deterministic across runner images and core.autocrlf settings.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$runtimeOverlaySources = @(
+  'src-tauri/crates/runtime/src/services/environment/kernel/launcher.rs',
+  'src-tauri/crates/runtime/src/services/environment/kernel/cdp.rs',
+  'src-tauri/crates/runtime/src/services/environment/kernel/mod.rs'
+)
+foreach ($relativePath in $runtimeOverlaySources) {
+  $sourcePath = Join-Path $rootDir $relativePath
+  if (-not (Test-Path $sourcePath)) {
+    throw "Win7 Supermium runtime overlay source was not found: $sourcePath"
+  }
+  $sourceText = [IO.File]::ReadAllText($sourcePath).Replace("`r`n", "`n")
+  [IO.File]::WriteAllText($sourcePath, $sourceText, $utf8NoBom)
+}
+
 $runtimePatch = Join-Path $rootDir 'scripts/patch-win7-supermium-runtime.ps1'
 if (-not (Test-Path $runtimePatch)) {
   throw "Win7 Supermium runtime patch script was not found: $runtimePatch"

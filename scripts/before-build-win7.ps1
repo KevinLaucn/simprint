@@ -55,4 +55,10 @@ if (-not $layoutText.Contains('<AppTitlebar />')) {
 $layoutText = $layoutText.Replace('<AppTitlebar />', '<AppTitlebar showWindowControls={false} />')
 [IO.File]::WriteAllText($appLayout, $layoutText, (New-Object System.Text.UTF8Encoding($false)))
 
-Write-Host 'Applied Win7 native-frame/titlebar compatibility overlay.'
+$runtimePatch = Join-Path $rootDir 'scripts/patch-win7-supermium-runtime.ps1'
+if (-not (Test-Path $runtimePatch)) {
+  throw "Win7 Supermium runtime patch script was not found: $runtimePatch"
+}
+& $runtimePatch
+
+Write-Host 'Applied Win7 native-frame/titlebar and Supermium runtime compatibility overlays.'

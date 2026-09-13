@@ -56,14 +56,3 @@ $layoutText = $layoutText.Replace('<AppTitlebar />', '<AppTitlebar showWindowCon
 [IO.File]::WriteAllText($appLayout, $layoutText, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host 'Applied Win7 native-frame/titlebar compatibility overlay.'
-
-Push-Location $rootDir
-try {
-  & node build.cjs
-  if ($LASTEXITCODE -ne 0) {
-    throw "Frontend build failed with exit code $LASTEXITCODE"
-  }
-} finally {
-  Pop-Location
-}
-

@@ -116,6 +116,53 @@ jobs:
       - name: Install PE inspection dependency
         run: python -m pip install pefile
 
+      - name: Prepare Win7 legacy Windows libraries
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # A clean GitHub runner does not have Cargo registry sources yet.
+          # Fetch while rustup is still visible, before the Tier-3 target workaround hides it.
+          & cargo.exe fetch `
+            --locked `
+            --manifest-path src-tauri/Cargo.toml `
+            --target $env:WIN7_TARGET
+          if ($LASTEXITCODE -ne 0) {
+            throw "cargo fetch failed with exit code $LASTEXITCODE"
+          }
+
+          $cargoHome = if ([string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+            Join-Path $env:USERPROFILE ".cargo"
+          } else {
+            $env:CARGO_HOME
+          }
+          $registry = Join-Path $cargoHome "registry\src"
+          if (-not (Test-Path $registry)) {
+            throw "Cargo registry was not created after cargo fetch: $registry"
+          }
+
+          # windows-targets 0.48.5 delegates the MSVC import library to this package.
+          $packageDir = Get-ChildItem $registry -Recurse -Directory -Filter "windows_x86_64_msvc-0.48.5" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $packageDir) {
+            throw "windows_x86_64_msvc-0.48.5 was not fetched"
+          }
+
+          $legacyLib = Join-Path $packageDir.FullName "lib\windows.0.48.5.lib"
+          if (-not (Test-Path $legacyLib)) {
+            throw "Legacy Windows import library was not found: $legacyLib"
+          }
+          $nativeDir = Split-Path $legacyLib -Parent
+
+          # RUSTFLAGS overrides target.<triple>.rustflags from .cargo/config.toml.
+          # Use the target-scoped Cargo environment variable and preserve crt-static explicitly.
+          $targetFlags = "-C target-feature=+crt-static -L native=$nativeDir"
+          "CARGO_TARGET_X86_64_WIN7_WINDOWS_MSVC_RUSTFLAGS=$targetFlags" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "Legacy Windows import library: $legacyLib"
+          Write-Host "Win7 target rustflags: $targetFlags"
+
       - name: Hide rustup for the Win7 Tier-3 target
         shell: powershell
         run: |
@@ -127,30 +174,7 @@ jobs:
             Write-Host "Temporarily hid rustup.exe before invoking Tauri CLI."
           }
 
-      - name: Fix legacy Windows target library lookup
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          # x86_64-win7-windows-msvc is intentionally distinct from the modern
-          # x86_64-pc-windows-msvc triple. Older windows-targets build scripts
-          # therefore omit their native library directory from the linker args.
-          $registry = "$env:USERPROFILE\.cargo\registry\src"
-          $legacyLib = Get-ChildItem $registry -Recurse -File -Filter "windows.0.48.5.lib" |
-            Select-Object -First 1
-          if (-not $legacyLib) {
-            Write-Host "Fetching target-specific legacy Windows libraries..."
-            cargo fetch --manifest-path src-tauri/Cargo.toml --target $env:WIN7_TARGET
-            $legacyLib = Get-ChildItem $registry -Recurse -File -Filter "windows.0.48.5.lib" |
-              Select-Object -First 1
-          }
-          if (-not $legacyLib) {
-            throw "windows.0.48.5.lib was not found after fetching Win7 target dependencies"
-          }
-          $flags = "$env:RUSTFLAGS -L native=$($legacyLib.Directory.FullName)".Trim()
-          "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Added legacy Windows library path: $($legacyLib.Directory.FullName)"
-
-      - name: Apply Win7 UI overlay and build frontend
+      - name: Apply Win7 UI overlay
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/before-build-win7.ps1
 

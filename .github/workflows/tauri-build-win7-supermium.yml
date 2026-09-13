@@ -127,6 +127,22 @@ jobs:
             Write-Host "Temporarily hid rustup.exe before invoking Tauri CLI."
           }
 
+      - name: Fix legacy Windows target library lookup
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # x86_64-win7-windows-msvc is intentionally distinct from the modern
+          # x86_64-pc-windows-msvc triple. Older windows-targets build scripts
+          # therefore omit their native library directory from the linker args.
+          $legacyLib = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src" -Recurse -File -Filter "windows.0.48.5.lib" |
+            Select-Object -First 1
+          if (-not $legacyLib) {
+            throw "windows.0.48.5.lib was not found in the Cargo registry cache"
+          }
+          $flags = "$env:RUSTFLAGS -L native=$($legacyLib.Directory.FullName)".Trim()
+          "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Added legacy Windows library path: $($legacyLib.Directory.FullName)"
+
       - name: Apply Win7 UI overlay and build frontend
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/before-build-win7.ps1

@@ -20,6 +20,7 @@ jobs:
     env:
       ENV_NAME: production
       SIMPRINT_WEBVIEW_MODE: win7-offline
+      VITE_WIN7_SUPERMIUM: 'true'
       WIN7_TARGET: x86_64-win7-windows-msvc
       RUST_TOOLCHAIN: nightly-2026-09-01
       WEBVIEW_VERSION: 109.0.1518.78
@@ -186,6 +187,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SIMPRINT_WEBVIEW_MODE: win7-offline
+          VITE_WIN7_SUPERMIUM: 'true'
           TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:

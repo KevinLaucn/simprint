@@ -52,12 +52,18 @@ pub struct ProxyConfig {
 impl ProxyConfig {
     /// 构建 Chromium 代理参数
     pub fn to_proxy_arg(&self) -> String {
+        use crate::infrastructure::proxy::types::format_proxy_host;
         let scheme = match self.proxy_type.to_lowercase().as_str() {
             "socks5" => "socks5",
             "https" => "https",
             _ => "http",
         };
-        format!("--proxy-server={}://{}:{}", scheme, self.host, self.port)
+        format!(
+            "--proxy-server={}://{}:{}",
+            scheme,
+            format_proxy_host(&self.host),
+            self.port
+        )
     }
 
     /// 兼容旧调用链。
@@ -87,12 +93,18 @@ impl ProxyConfig {
     }
 
     pub fn to_browser_proxy_config(&self) -> BrowserProxyConfigPayload {
+        use crate::infrastructure::proxy::types::format_proxy_host;
         let scheme = match self.proxy_type.to_lowercase().as_str() {
             "socks5" => "socks5",
             "https" => "https",
             _ => "http",
         };
-        let endpoint = format!("{}://{}:{}", scheme, self.host, self.port);
+        let endpoint = format!(
+            "{}://{}:{}",
+            scheme,
+            format_proxy_host(&self.host),
+            self.port
+        );
 
         let auth = match (&self.username, &self.password) {
             (Some(username), Some(password)) => Some(std::collections::HashMap::from([(
@@ -111,6 +123,31 @@ impl ProxyConfig {
             bypass_list: None,
             auth,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProxyConfig;
+
+    #[test]
+    fn chromium_proxy_endpoints_bracket_ipv6_hosts() {
+        let config = ProxyConfig {
+            host: "2001:db8::1".to_string(),
+            port: 1080,
+            proxy_type: "socks5".to_string(),
+            username: None,
+            password: None,
+        };
+
+        assert_eq!(
+            config.to_proxy_arg(),
+            "--proxy-server=socks5://[2001:db8::1]:1080"
+        );
+        assert_eq!(
+            config.to_browser_proxy_config().server,
+            "socks5://[2001:db8::1]:1080"
+        );
     }
 }
 

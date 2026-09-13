@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { TextareaInput } from '@/components/textarea-input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { parseProxyInput } from '@/lib/proxy';
 import type { ProxyFormData } from '../types';
 
 type ProxyType = 'http' | 'https' | 'socks5';
@@ -157,34 +158,7 @@ export function ProxyCreateDialog({
       // type://host:port
       // type://username:password@host:port
 
-      let parsed: Partial<ProxyFormData> = {};
-
-      // 检测是否有协议前缀
-      const protocolMatch = text.match(/^(http|https|socks5):\/\//i);
-      let remaining = text;
-      if (protocolMatch) {
-        parsed.type = protocolMatch[1].toLowerCase() as ProxyType;
-        remaining = text.slice(protocolMatch[0].length);
-      }
-
-      // 检测 username:password@host:port 格式
-      const atMatch = remaining.match(/^([^:]+):([^@]+)@(.+)$/);
-      if (atMatch) {
-        parsed.username = atMatch[1];
-        parsed.password = atMatch[2];
-        remaining = atMatch[3];
-      }
-
-      // 解析 host:port 或 host:port:username:password
-      const parts = remaining.split(':');
-      if (parts.length >= 2) {
-        parsed.host = parts[0];
-        parsed.port = parts[1];
-        if (parts.length >= 4 && !parsed.username) {
-          parsed.username = parts[2];
-          parsed.password = parts[3];
-        }
-      }
+      const parsed = parseProxyInput(text);
 
       if (parsed.host && parsed.port) {
         onFormDataChange({

@@ -346,7 +346,7 @@ function createBaseEdge(
     markerEnd: { type: MarkerType.ArrowClosed },
     style: { stroke: '#64748b', strokeWidth: 2 },
     labelStyle: { fill: '#64748b', fontSize: 10, fontWeight: 600 },
-    labelBgStyle: { fill: 'hsl(var(--background))', fillOpacity: 0.92 },
+    labelBgStyle: { fill: 'var(--background)', fillOpacity: 0.92 },
   };
 }
 
@@ -1130,7 +1130,7 @@ const styledEdges = useMemo(
             variant={BackgroundVariant.Dots}
             gap={16}
             size={1}
-            color="hsl(var(--muted-foreground) / 0.3)"
+            color="rgba(107, 114, 128, 0.3)"
           />
           <Controls
             showZoom

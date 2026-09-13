@@ -80,11 +80,31 @@ impl ProxyConfig {
             let password = password_struct.get_plain_password()?;
             Ok(format!(
                 "{}://{}:{}@{}:{}",
-                scheme, username, password, self.host, self.port
+                scheme,
+                username,
+                password,
+                format_proxy_host(&self.host),
+                self.port
             ))
         } else {
-            Ok(format!("{}://{}:{}", scheme, self.host, self.port))
+            Ok(format!(
+                "{}://{}:{}",
+                scheme,
+                format_proxy_host(&self.host),
+                self.port
+            ))
         }
+    }
+}
+
+pub fn format_proxy_host(host: &str) -> String {
+    let host = host.trim();
+    if host.starts_with('[') && host.ends_with(']') {
+        host.to_string()
+    } else if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
     }
 }
 

@@ -102,6 +102,12 @@ const systemToPlatform: Record<string, string> = {
 const KERNEL_TYPE_CHROME = 'chrome';
 const KERNEL_TYPE_FIREFOX = 'firefox';
 const SIMPRINT_KERNEL_CHROMIUM = 'SIMPRINT_KERNEL_CHROMIUM';
+const isWin7Supermium = import.meta.env.VITE_WIN7_SUPERMIUM === 'true';
+
+function getKernelDisplayName(kernel: BrowserKernelVersion): string {
+  const majorVersion = kernel.version.split('.')[0];
+  return isWin7Supermium ? `Supermium ${majorVersion} (Chromium ${majorVersion})` : kernel.resource_name;
+}
 
 export function WindowInfoForm({ value, onChange }: WindowInfoFormProps) {
   const { t } = useTranslation('create-window');
@@ -134,15 +140,13 @@ export function WindowInfoForm({ value, onChange }: WindowInfoFormProps) {
         setKernelVersions(versions);
         // 首次加载且 kernel 不在列表中时，设为第一个版本
         if (versions.length > 0) {
-          const currentInList = versions.some(
-            (v) => v.kernel_id === value.kernelId || (!value.kernelId && v.resource_name === value.kernel)
-          );
+          const currentInList = versions.some((v) => v.kernel_id === value.kernelId);
           const needDefault =
             !hasSetDefaultKernel.current[platform] &&
-            (!currentInList || value.kernel === 'Chrome');
+            (!currentInList || value.kernel === 'Chrome' || isWin7Supermium);
           if (needDefault) {
             hasSetDefaultKernel.current[platform] = true;
-            const firstResourceName = versions[0].resource_name;
+            const firstResourceName = getKernelDisplayName(versions[0]);
             const kernelVersion = versions[0].version;
             const newUA = generateUserAgentByKernel(value.system, 'Chrome', kernelVersion);
             onChange({
@@ -173,7 +177,7 @@ export function WindowInfoForm({ value, onChange }: WindowInfoFormProps) {
     const newUA = generateUserAgentByKernel(value.system, 'Chrome', kernelVersion);
     onChange({
       ...value,
-      kernel: selected.resource_name,
+      kernel: getKernelDisplayName(selected),
       kernelId: selected.kernel_id,
       userAgent: newUA,
     });
@@ -342,7 +346,7 @@ export function WindowInfoForm({ value, onChange }: WindowInfoFormProps) {
               <SelectContent>
                 {kernelVersions.map((v) => (
                   <SelectItem key={v.kernel_id} value={v.kernel_id}>
-                    {v.resource_name}
+                    {getKernelDisplayName(v)}
                   </SelectItem>
                 ))}
               </SelectContent>

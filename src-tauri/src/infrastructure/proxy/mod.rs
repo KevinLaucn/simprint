@@ -31,6 +31,18 @@ mod tests {
         assert_eq!(url, "socks5h://user:pass@proxy.example.com:1080");
     }
 
+    #[test]
+    fn test_ipv6_proxy_url_is_bracketed() {
+        let config = ProxyConfig {
+            proxy_type: ProxyType::Socks5,
+            host: "2001:db8::1".to_string(),
+            port: 1080,
+            username: None,
+            password: None,
+        };
+        assert_eq!(config.to_url().unwrap(), "socks5h://[2001:db8::1]:1080");
+    }
+
     /// 测试直连 IP 检测（不使用代理）
     #[tokio::test]
     #[ignore] // 默认跳过，需要网络访问

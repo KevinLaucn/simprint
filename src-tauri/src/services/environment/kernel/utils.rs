@@ -61,6 +61,22 @@ pub fn extract_zip_to_dir(zip_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 递归复制已由安装包携带的浏览器内核资源。
+pub fn copy_dir_recursive(source_dir: &Path, target_dir: &Path) -> Result<()> {
+    fs::create_dir_all(target_dir)?;
+    for entry in fs::read_dir(source_dir)? {
+        let entry = entry?;
+        let source = entry.path();
+        let target = target_dir.join(entry.file_name());
+        if source.is_dir() {
+            copy_dir_recursive(&source, &target)?;
+        } else {
+            fs::copy(&source, &target)?;
+        }
+    }
+    Ok(())
+}
+
 /// 可执行文件名
 pub fn exe_name() -> &'static str {
     #[cfg(target_os = "windows")]

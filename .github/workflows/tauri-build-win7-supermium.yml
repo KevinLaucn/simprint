@@ -105,6 +105,38 @@ jobs:
           Write-Host "Bundled WebView2: $($webviewExe.Directory.FullName)"
           Write-Host "Signer: $($sig.SignerCertificate.Subject)"
 
+      - name: Bundle Supermium browser kernel
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip"
+          $sha256 = "805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca"
+          $zip = Join-Path $env:RUNNER_TEMP "supermium-144-r5.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "supermium-144-r5-extract"
+          $target = "src-tauri/resources/supermium"
+
+          Remove-Item $zip -Force -ErrorAction SilentlyContinue
+          & curl.exe -L --fail --retry 5 --retry-delay 2 --connect-timeout 30 --output $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "Supermium download failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path $zip)) { throw "Supermium archive was not downloaded" }
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha256) {
+            throw "Supermium archive SHA256 does not match the pinned release"
+          }
+
+          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $extract, $target | Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          $supermiumExe = Get-ChildItem $extract -Recurse -File | Where-Object {
+            $_.Name -ieq "chrome.exe" -or $_.Name -ieq "supermium.exe"
+          } | Select-Object -First 1
+          if (-not $supermiumExe) { throw "Supermium archive does not contain chrome.exe or supermium.exe" }
+          Copy-Item (Join-Path $supermiumExe.Directory.FullName '*') $target -Recurse -Force
+          if (-not (Get-ChildItem $target -Recurse -File | Where-Object {
+            $_.Name -ieq "chrome.exe" -or $_.Name -ieq "supermium.exe"
+          })) { throw "Bundled Supermium resource is incomplete" }
+          Write-Host "Bundled Supermium from pinned release: $($supermiumExe.FullName)"
+
       - name: Prepare Win7 Tauri config with public key injection
         run: node deploy/prepare-tauri-config.mjs win7-offline x86_64-win7-windows-msvc
 

@@ -53,6 +53,12 @@ function win7LegacyCssPlugin() {
           .replace(
             /oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)/g,
             (_match, lightness, chroma, hue, alpha) => oklchToCss(lightness, chroma, hue, alpha)
+          )
+          .concat(
+            '\n/* Win7/Chromium 109 explicit active-tab color fallback */\n' +
+              '[data-slot="tabs-trigger"][data-state="active"],[role="tab"][aria-selected="true"]{color:#333!important}\n' +
+              '.dark [data-slot="tabs-trigger"][data-state="active"],.dark [role="tab"][aria-selected="true"]{color:#e5e5e5!important}\n' +
+              '[data-slot="tabs-trigger"][data-state="active"] svg,[role="tab"][aria-selected="true"] svg{color:inherit;fill:currentColor;stroke:currentColor}\n'
           );
       }
     },

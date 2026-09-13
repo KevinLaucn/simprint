@@ -29,18 +29,15 @@ pub use types::{
 /// 内核服务
 pub struct KernelService;
 
-/// Windows 7 版本使用固定的 Supermium；浏览器文件首次使用时在线下载。
+/// Windows 7 版本使用随安装包携带的固定 Supermium，运行时不再联网下载浏览器。
 #[cfg(feature = "win7-offline")]
-async fn ensure_supermium_online(
+async fn ensure_supermium_bundled(
     app: &tauri::AppHandle,
     env_uuid: &Option<String>,
     install_dir_name: &str,
     profiles_path: &str,
     status_emitter: Option<&KernelStatusEmitter>,
 ) -> Result<std::path::PathBuf> {
-    const URL: &str = "https://github.com/win32ss/supermium/releases/download/v144-r5/supermium_144_64_nonsetup.zip";
-    const SHA256: &str = "805232e5cde1bf6971748bc7fb6a2cb09fdfce9ceb91062a1814b228139956ca";
-
     let base = utils::resolve_profiles_base(app, profiles_path)?;
     let kernel_dir = utils::resolve_kernel_install_dir(&base, install_dir_name)?;
     let find_executable = |root: &std::path::Path| -> Option<std::path::PathBuf> {
@@ -66,36 +63,20 @@ async fn ensure_supermium_online(
         return Ok(exe_path);
     }
 
-    utils::emit_status(
-        status_emitter,
-        env_uuid,
-        install_dir_name,
-        EnvironmentStatus::Downloading,
-        Some("正在下载 Supermium 浏览器内核…"),
-        Some(0.0),
-        Some(0),
-        None,
-    );
-
-    let cache_dir = crate::core::paths::PathManager::get_kernel_cache_dir(app)?;
-    fs::create_dir_all(&cache_dir)?;
-    let zip_path = cache_dir.join(format!("supermium-{SHA256}.zip"));
-    if !zip_path.is_file() {
-        let response = reqwest::Client::new().get(URL).send().await?;
-        if !response.status().is_success() {
-            return Err(format!("下载 Supermium 失败：HTTP {}", response.status()).into());
-        }
-        let body = response.bytes().await?;
-        fs::write(&zip_path, body)?;
+    let bundled_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("无法定位安装包资源目录: {error}"))?
+        .join("supermium");
+    if !bundled_dir.is_dir() {
+        return Err(format!("安装包缺少 Supermium 内核资源: {}", bundled_dir.display()).into());
     }
-
-    if crate::core::utils::hash::calculate_file_hash(&zip_path)? != SHA256 {
-        let _ = fs::remove_file(&zip_path);
-        return Err("Supermium 下载文件校验失败".into());
+    if find_executable(&bundled_dir).is_none() {
+        return Err(format!("安装包中的 Supermium 内核不完整: {}", bundled_dir.display()).into());
     }
 
     let staging_dir = base.join(format!(
-        ".{install_dir_name}.supermium-staging-{}",
+        ".{install_dir_name}.supermium-bundled-staging-{}",
         Uuid::new_v4()
     ));
     fs::create_dir_all(&staging_dir)?;
@@ -104,17 +85,17 @@ async fn ensure_supermium_online(
         env_uuid,
         install_dir_name,
         EnvironmentStatus::Extracting,
-        Some("正在解压 Supermium 浏览器内核…"),
+        Some("正在准备安装包内置的 Supermium 浏览器内核…"),
         None,
         None,
         None,
     );
-    if let Err(error) = utils::extract_zip_to_dir(&zip_path, &staging_dir) {
+    if let Err(error) = utils::copy_dir_recursive(&bundled_dir, &staging_dir) {
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(error);
     }
     let exe_path = find_executable(&staging_dir)
-        .ok_or_else(|| "Supermium 压缩包中未找到 chrome.exe 或 supermium.exe")?;
+        .ok_or_else(|| "安装包中的 Supermium 资源中未找到 chrome.exe 或 supermium.exe")?;
     if kernel_dir.exists() {
         fs::remove_dir_all(&kernel_dir)?;
     }
@@ -190,7 +171,7 @@ impl KernelService {
 
         #[cfg(feature = "win7-offline")]
         {
-            let exe_path = ensure_supermium_online(
+            let exe_path = ensure_supermium_bundled(
                 &app,
                 &env_uuid,
                 &install_dir_name,
@@ -208,7 +189,7 @@ impl KernelService {
                 None,
                 None,
             );
-            record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-online").await;
+            record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-bundled").await;
             return Ok(exe_path.to_string_lossy().to_string());
         }
 

@@ -21,7 +21,7 @@ const DEVELOPMENT_BROWSER_ARGS: [&str; 1] = ["--no-sandbox"];
 use tokio::process::Child;
 
 const BROWSER_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
-const CDP_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const CDP_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(serde::Serialize)]
 struct RpaCommandPayload<'a> {
@@ -196,22 +196,23 @@ pub async fn launch_browser(
         browser
     };
 
-    let (mut browser, browser_ws_url) = match wait_for_cdp_ready(&env_id, cdp_port, browser).await {
-        Ok(ready) => ready,
-        Err(error) => {
-            fail_launch(
-                &env_id,
-                "cdp_ready",
-                &error,
-                cdp_endpoint_manager.clone(),
-                job_manager.clone(),
-                status_manager.clone(),
-                events.clone(),
-            )
-            .await;
-            return Err(error);
-        }
-    };
+    let (mut browser, browser_ws_url) =
+        match wait_for_cdp_ready(&env_id, cdp_port, browser, &request.user_data_dir).await {
+            Ok(ready) => ready,
+            Err(error) => {
+                fail_launch(
+                    &env_id,
+                    "cdp_ready",
+                    &error,
+                    cdp_endpoint_manager.clone(),
+                    job_manager.clone(),
+                    status_manager.clone(),
+                    events.clone(),
+                )
+                .await;
+                return Err(error);
+            }
+        };
 
     status_manager.set_status(&env_id, EnvironmentStatus::Running).await;
 
@@ -267,6 +268,7 @@ async fn wait_for_cdp_ready(
     env_id: &str,
     cdp_port: u16,
     mut browser: Child,
+    user_data_dir: &str,
 ) -> Result<(Child, String)> {
     let version_url = format!("http://127.0.0.1:{}/json/version", cdp_port);
     let client = reqwest::Client::builder()
@@ -282,9 +284,10 @@ async fn wait_for_cdp_ready(
                 env_id, error
             ))
         })? {
+            let log_tail = read_browser_log_tail(user_data_dir);
             return Err(RuntimeError::Internal(format!(
-                "browser process exited before CDP became ready for environment {}: {}",
-                env_id, status
+                "browser process exited before CDP became ready for environment {}: {}{}",
+                env_id, status, log_tail
             )));
         }
 
@@ -301,11 +304,13 @@ async fn wait_for_cdp_ready(
         }
 
         if tokio::time::Instant::now() >= deadline {
+            let log_tail = read_browser_log_tail(user_data_dir);
             return Err(RuntimeError::Internal(format!(
-                "CDP endpoint {} did not become ready within {} seconds for environment {}",
+                "CDP endpoint {} did not become ready within {} seconds for environment {}{}",
                 version_url,
                 CDP_STARTUP_TIMEOUT.as_secs(),
-                env_id
+                env_id,
+                log_tail
             )));
         }
 
@@ -481,7 +486,7 @@ async fn spawn_browser_process(
             .map_err(|error| RuntimeError::Internal(error.to_string()))?;
     }
 
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| RuntimeError::Internal(format_process_spawn_error(exe_path, error)))?;
     let pid = child.id().ok_or_else(|| {
@@ -492,9 +497,13 @@ async fn spawn_browser_process(
     })?;
 
     if let Err(error) = job_manager.create_and_assign(env_id, pid).await {
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        return Err(error);
+        log_warn(
+            "kernel",
+            format!(
+                "Failed to assign browser process (pid: {}) to job object for environment {}: {}. Continuing without job object.",
+                pid, env_id, error
+            ),
+        );
     }
 
     log_info(

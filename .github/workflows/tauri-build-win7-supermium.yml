@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - win7
+      - main
   workflow_dispatch:
 
 permissions:

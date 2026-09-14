@@ -493,7 +493,7 @@ pub async fn migrate_legacy_environment_bindings(pool: &DbPool) -> Result<u64, S
             Ok(value) => value,
             Err(_) => continue,
         };
-        let kernel = match resolve_requested_kernel(pool, &window_info, false).await {
+        let kernel = match resolve_requested_kernel(pool, &window_info, true).await {
             Ok(kernel) => kernel,
             Err(_) => continue,
         };

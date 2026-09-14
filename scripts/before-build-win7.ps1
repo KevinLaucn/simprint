@@ -140,14 +140,22 @@ async fn ensure_supermium_bundled(
     _profiles_path: &str,
     _status_emitter: Option<&KernelStatusEmitter>,
 ) -> Result<std::path::PathBuf> {
-    let bundled_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("无法定位安装包资源目录: {error}"))?
-        .join("supermium");
-    if !bundled_dir.is_dir() {
-        return Err(format!("安装包缺少 Supermium 内核资源: {}", bundled_dir.display()).into());
+    let mut candidate_dirs = Vec::new();
+    if let Ok(res_dir) = app.path().resource_dir() {
+        candidate_dirs.push(res_dir.join("supermium"));
+        candidate_dirs.push(res_dir.join("resources").join("supermium"));
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidate_dirs.push(parent.join("supermium"));
+            candidate_dirs.push(parent.join("resources").join("supermium"));
+        }
+    }
+
+    let bundled_dir = candidate_dirs
+        .into_iter()
+        .find(|dir| dir.is_dir())
+        .ok_or_else(|| "安装包缺少 Supermium 内核资源目录 (supermium)".to_string())?;
 
     let mut pending = vec![bundled_dir.clone()];
     while let Some(dir) = pending.pop() {

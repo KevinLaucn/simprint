@@ -27,13 +27,35 @@ pub(super) async fn resolve_kernel_launch(
     let environment_uuid = Uuid::parse_str(&env.uuid)
         .map_err(|error| format!("Invalid environment uuid {}: {error}", env.uuid))?;
     let context = app.state::<business::svc_ctx::SvcCtx>();
-    let kernel_detail =
-        business::services::browser_kernels::get_environment_kernel(&context.db, environment_uuid)
-            .await?
-            .ok_or("This environment has no browser kernel binding.")?;
+    let kernel_detail = match business::services::browser_kernels::get_environment_kernel(
+        &context.db,
+        environment_uuid,
+    )
+    .await?
+    {
+        Some(detail) => detail,
+        None => {
+            let default_kernel = business::services::browser_kernels::default_browser_kernel(&context.db)
+                .await?
+                .ok_or("This environment has no browser kernel binding and no default kernel exists.")?;
+            let _ = business::services::browser_kernels::bind_environment_kernel(
+                &context.db,
+                environment_uuid,
+                &default_kernel.kernel_id,
+            )
+            .await;
+            default_kernel
+        }
+    };
     let kernel_id = kernel_detail.kernel_id.clone();
     let install_dir_name = kernel_detail.install_dir_name.clone();
 
+    #[cfg(feature = "win7-offline")]
+    let url = kernel_detail
+        .url
+        .unwrap_or_default();
+
+    #[cfg(not(feature = "win7-offline"))]
     let url = kernel_detail
         .url
         .filter(|value| !value.trim().is_empty())

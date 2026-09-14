@@ -119,6 +119,11 @@ $fingerprintArgsOld = @'
     if let Some(proxy) = proxy {
 '@
 $fingerprintArgsNew = @'
+    args.push("--no-first-run".to_string());
+    args.push("--no-default-browser-check".to_string());
+    args.push("--password-store=basic".to_string());
+    args.push("--use-mock-keychain".to_string());
+    args.push("--disable-features=Translate,OptimizationHints,MediaRouter".to_string());
     if let Some(size) = window_size {
         args.push(format!("--window-size={}", size));
     }
@@ -155,59 +160,7 @@ $fingerprintArgsNew = @'
         if config.hardware_acceleration == Some(false) {
             args.push("--disable-gpu".to_string());
         }
-        if config.disable_sandbox == Some(true) {
-            args.push("--no-sandbox".to_string());
-        }
-        if let Some(parameters) = config
-            .startup_parameters
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            for argument in parameters.split_whitespace().filter(|value| value.starts_with("--")) {
-                args.push(argument.to_string());
-            }
-        }
-    }
-    if let Some(proxy) = proxy {
-'@
-    if let Some(size) = window_size {
-        args.push(format!("--window-size={}", size));
-    }
-    if let Some(config) = fingerprint_config {
-        if let Some(user_agent) = config
-            .user_agent
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            args.push(format!("--user-agent={}", user_agent));
-        }
-        let language = config
-            .interface_language
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                config
-                    .language
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("ip"))
-            });
-        if let Some(language) = language {
-            args.push(format!("--lang={}", language));
-        }
-        if config.sound == Some(false) {
-            args.push("--mute-audio".to_string());
-        }
-        if config.images == Some(false) {
-            args.push("--blink-settings=imagesEnabled=false".to_string());
-        }
-        if config.hardware_acceleration == Some(false) {
-            args.push("--disable-gpu".to_string());
-        }
-        if config.disable_sandbox == Some(true) {
+        if config.disable_sandbox != Some(false) {
             args.push("--no-sandbox".to_string());
         }
         if let Some(parameters) = config

@@ -1,24 +1,5 @@
 $ErrorActionPreference = 'Stop'
 
-function Replace-TextOnce {
-  param(
-    [string]$Text,
-    [string]$Old,
-    [string]$New,
-    [string]$Label
-  )
-
-  $first = $Text.IndexOf($Old, [System.StringComparison]::Ordinal)
-  if ($first -lt 0) {
-    throw "$Label target was not found"
-  }
-  $second = $Text.IndexOf($Old, $first + $Old.Length, [System.StringComparison]::Ordinal)
-  if ($second -ge 0) {
-    throw "$Label expected one target but found multiple"
-  }
-  return $Text.Substring(0, $first) + $New + $Text.Substring($first + $Old.Length)
-}
-
 $rootDir = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path } else { $PWD }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $launcherPath = Join-Path $rootDir 'src-tauri/crates/runtime/src/services/environment/kernel/launcher.rs'
@@ -27,13 +8,21 @@ $launcher = [IO.File]::ReadAllText($launcherPath).Replace("`r`n", "`n")
 # User-defined startup parameters remain supported, but they must not be able to
 # override the flags that enforce profile isolation, CDP ownership, proxy routing,
 # extension loading, or Simprint environment identity.
-$old = @'
-            for argument in parameters.split_whitespace().filter(|value| value.starts_with("--")) {
-                args.push(argument.to_string());
-            }
-'@
-$new = @'
-            for argument in parameters.split_whitespace().filter(|value| value.starts_with("--")) {
+$guardMarker = 'Ignoring reserved Supermium startup flag: {}'
+if ($launcher.Contains($guardMarker)) {
+  Write-Host 'Win7 Supermium runtime v3 isolation guard already applied.'
+  exit 0
+}
+
+$pattern = 'for argument in parameters\.split_whitespace\(\)\.filter\(\|value\| value\.starts_with\("--"\)\)\s*\{\s*args\.push\(argument\.to_string\(\)\);\s*\}'
+$regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+$matches = $regex.Matches($launcher)
+if ($matches.Count -ne 1) {
+  throw "Win7 reserved Chromium startup flags expected exactly one startup-parameter loop, found $($matches.Count)"
+}
+
+$guardedLoop = @'
+for argument in parameters.split_whitespace().filter(|value| value.starts_with("--")) {
                 let flag_name = argument
                     .split_once('=')
                     .map(|(name, _)| name)
@@ -64,7 +53,16 @@ $new = @'
                 args.push(argument.to_string());
             }
 '@
-$launcher = Replace-TextOnce $launcher $old $new 'Win7 reserved Chromium startup flags'
-[IO.File]::WriteAllText($launcherPath, $launcher, $utf8NoBom)
 
+$launcher = $regex.Replace(
+  $launcher,
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $guardedLoop },
+  1
+)
+
+if (-not $launcher.Contains($guardMarker)) {
+  throw 'Win7 reserved Chromium startup flags guard was not applied'
+}
+
+[IO.File]::WriteAllText($launcherPath, $launcher, $utf8NoBom)
 Write-Host 'Applied Win7 Supermium runtime v3 isolation guard for custom startup flags.'

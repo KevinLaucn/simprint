@@ -2,6 +2,7 @@ mod detail;
 mod fingerprint;
 mod kernel;
 mod paths;
+mod proxy_bridge;
 mod types;
 
 use futures::future::try_join_all;
@@ -57,8 +58,9 @@ impl EnvironmentLaunchRuntimeService {
             display_id,
         )
         .await?;
+        let env_id = request.env_uuid.clone();
 
-        KernelService::launch_environment(
+        let result = KernelService::launch_environment(
             app,
             request.exe_path,
             request.env_uuid,
@@ -71,7 +73,12 @@ impl EnvironmentLaunchRuntimeService {
             request.extensions,
             status_emitter,
         )
-        .await
+        .await;
+
+        if result.is_err() {
+            proxy_bridge::stop_proxy_bridge(&env_id).await;
+        }
+        result
     }
 
     pub async fn batch_start_environments_by_uuid(
@@ -81,7 +88,8 @@ impl EnvironmentLaunchRuntimeService {
         display_ids_by_env_uuid: Option<std::collections::HashMap<String, String>>,
     ) -> Result<Vec<BatchLaunchResult>> {
         let app = get_app_handle()?;
-        let requests = try_join_all(env_uuids.into_iter().map(|env_uuid| {
+        let cleanup_env_ids = env_uuids.clone();
+        let requests_result = try_join_all(env_uuids.into_iter().map(|env_uuid| {
             let display_id =
                 display_ids_by_env_uuid.as_ref().and_then(|items| items.get(&env_uuid).cloned());
             Self::build_launch_request(
@@ -92,9 +100,38 @@ impl EnvironmentLaunchRuntimeService {
                 display_id,
             )
         }))
-        .await?;
+        .await;
 
-        KernelService::batch_launch_environments(app, requests, status_emitter).await
+        let requests = match requests_result {
+            Ok(requests) => requests,
+            Err(error) => {
+                for env_uuid in &cleanup_env_ids {
+                    proxy_bridge::stop_proxy_bridge(env_uuid).await;
+                }
+                return Err(error);
+            }
+        };
+
+        match KernelService::batch_launch_environments(app, requests, status_emitter).await {
+            Ok(results) => {
+                for result in &results {
+                    if !result.success {
+                        proxy_bridge::stop_proxy_bridge(&result.env_uuid).await;
+                    }
+                }
+                Ok(results)
+            }
+            Err(error) => {
+                for env_uuid in &cleanup_env_ids {
+                    proxy_bridge::stop_proxy_bridge(env_uuid).await;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn stop_proxy_bridge(env_uuid: &str) {
+        proxy_bridge::stop_proxy_bridge(env_uuid).await;
     }
 
     async fn build_launch_request(
@@ -127,13 +164,16 @@ impl EnvironmentLaunchRuntimeService {
                 .unwrap_or_else(|| "Unnamed Environment".to_string()),
         );
 
+        let proxy = resolve_environment_proxy_config(&app, &env.uuid, detail.proxy)?;
+        let proxy = proxy_bridge::prepare_browser_proxy(&env.uuid, proxy).await?;
+
         Ok(BatchLaunchRequest {
             exe_path: resolved_kernel.exe_path,
             env_uuid: env.uuid.clone(),
             cache_path: launch_paths.cache_path.clone(),
             cookies: normalize_cookies(detail.cookies),
             urls: normalize_urls(detail.urls),
-            proxy: resolve_environment_proxy_config(&app, &env.uuid, detail.proxy)?,
+            proxy,
             fingerprint_config: Some(fingerprint_config),
             accounts: normalize_accounts(detail.accounts),
             extensions: normalize_extensions(detail.extensions),

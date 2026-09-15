@@ -115,8 +115,11 @@ $launcher = Replace-RegexOnce $launcher `
   'Win7 Supermium fingerprint spawn signature'
 
 # Apply the stock-Chromium settings that do have stable command-line equivalents.
+# The v1 overlay creates two proxy blocks, so anchor this insertion to the
+# fixed_servers branch instead of the ambiguous opening line alone.
 $fingerprintArgsOld = @'
     if let Some(proxy) = proxy {
+        if proxy.mode.eq_ignore_ascii_case("fixed_servers") {
 '@
 $fingerprintArgsNew = @'
     args.push("--no-first-run".to_string());
@@ -175,6 +178,7 @@ $fingerprintArgsNew = @'
         }
     }
     if let Some(proxy) = proxy {
+        if proxy.mode.eq_ignore_ascii_case("fixed_servers") {
 '@
 $launcher = Replace-TextOnce $launcher $fingerprintArgsOld $fingerprintArgsNew 'Win7 Supermium standard fingerprint args'
 

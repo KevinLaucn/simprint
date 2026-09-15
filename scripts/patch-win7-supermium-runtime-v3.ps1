@@ -76,4 +76,5 @@ if (-not $launcher.Contains($guardMarker)) {
 [IO.File]::WriteAllText($launcherPath, $launcher, $utf8NoBom)
 Write-Host 'Applied Win7 Supermium runtime v3 isolation guard for custom startup flags.'
 
+# Keep the dual-kernel overlay as the final Win7 runtime/build transformation.
 Invoke-DualKernelPatch

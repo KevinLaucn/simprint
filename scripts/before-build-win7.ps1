@@ -58,13 +58,36 @@ function Replace-TextOnce {
 $rootDir = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path } else { $PWD }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $windowService = Join-Path $rootDir 'src-tauri/src/services/window/mod.rs'
-$windowText = [IO.File]::ReadAllText($windowService)
+$windowText = [IO.File]::ReadAllText($windowService).Replace("`r`n", "`n")
 $mainFramePattern = '(\.center\(\)\r?\n\s*)\.decorations\(false\)(\r?\n\s*\.visible\(false\))'
 $mainFrameMatches = [regex]::Matches($windowText, $mainFramePattern)
 if ($mainFrameMatches.Count -ne 1) {
   throw "Win7 main-window compatibility patch expected one target, found $($mainFrameMatches.Count)"
 }
 $windowText = [regex]::Replace($windowText, $mainFramePattern, '$1.decorations(true)$2', 1)
+$mainWindowBuildTarget = @'
+                .build()?;
+
+        log::info!(
+            "Main window built in {:.1} ms",
+'@
+$mainWindowBuildReplacement = @'
+                .build()?;
+
+        // Win7 does not reliably inherit the bundle icon for dynamically built
+        // webview windows. Set it explicitly so the title bar and taskbar use
+        // the Simprint application identity.
+        if let Some(icon) = app_handle.default_window_icon() {
+            _window.set_icon(icon.clone())?;
+        }
+
+        log::info!(
+            "Main window built in {:.1} ms",
+'@
+$windowText = Replace-TextOnce $windowText `
+  $mainWindowBuildTarget `
+  $mainWindowBuildReplacement `
+  'Win7 explicit main-window icon'
 [IO.File]::WriteAllText($windowService, $windowText, $utf8NoBom)
 
 $appLayout = Join-Path $rootDir 'plugins/layouts/app-layout/src/index.tsx'
@@ -94,6 +117,18 @@ $sidebarText = Replace-TextOnce $sidebarText `
   "`${isActive ? 'text-white' : 'text-sidebar-foreground/90'" `
   'Win7 active sidebar label foreground'
 [IO.File]::WriteAllText($sidebarPath, $sidebarText, $utf8NoBom)
+
+# The create-window Chrome watermark used Tailwind's color-alpha syntax. On the
+# pinned WebView2 109 runtime that alpha can be lost, turning a decorative 10%
+# watermark into a foreground-colored shape that obscures the form. Use the
+# legacy CSS opacity property instead and keep the mark intentionally subtle.
+$windowInfoPath = Join-Path $rootDir 'plugins/pages/create-window/src/components/window-info-form.tsx'
+$windowInfoText = [IO.File]::ReadAllText($windowInfoPath).Replace("`r`n", "`n")
+$windowInfoText = Replace-TextOnce $windowInfoText `
+  'className="w-96 h-96 text-muted-foreground/10"' `
+  'className="w-96 h-96 text-muted-foreground opacity-[0.025]"' `
+  'Win7 create-window watermark opacity'
+[IO.File]::WriteAllText($windowInfoPath, $windowInfoText, $utf8NoBom)
 
 # Win7 release builds need actionable IO diagnostics. The generic 030000 code
 # hid the underlying Windows error, which made runtime launch failures opaque.
@@ -217,5 +252,3 @@ if (-not (Test-Path $runtimeV3Patch)) {
   throw "Win7 Supermium runtime v3 patch script was not found: $runtimeV3Patch"
 }
 & $runtimeV3Patch
-
-Write-Host 'Applied Win7 native-frame/titlebar, sidebar contrast, direct bundled kernel, detailed errors, and Supermium runtime v3 compatibility overlays.'

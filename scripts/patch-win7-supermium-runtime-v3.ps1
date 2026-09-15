@@ -19,6 +19,14 @@ function Invoke-DualKernelPatch {
   & $dualKernelPatch
 }
 
+function Invoke-DiagnosticsPatch {
+  $diagnosticsPatch = Join-Path $PSScriptRoot 'patch-win7-supermium-runtime-v4.ps1'
+  if (-not (Test-Path $diagnosticsPatch)) {
+    throw "Win7 environment diagnostics patch script was not found: $diagnosticsPatch"
+  }
+  & $diagnosticsPatch
+}
+
 # User-defined startup parameters remain supported, but they must not be able to
 # override the flags that enforce profile isolation, CDP ownership, proxy routing,
 # extension loading, or Simprint environment identity.
@@ -26,6 +34,7 @@ $guardMarker = 'Ignoring reserved Supermium startup flag: {}'
 if ($launcher.Contains($guardMarker)) {
   Write-Host 'Win7 Supermium runtime v3 isolation guard already applied.'
   Invoke-DualKernelPatch
+  Invoke-DiagnosticsPatch
   exit 0
 }
 
@@ -82,5 +91,7 @@ if (-not $launcher.Contains($guardMarker)) {
 [IO.File]::WriteAllText($launcherPath, $launcher, $utf8NoBom)
 Write-Host 'Applied Win7 Supermium runtime v3 isolation guard for custom startup flags.'
 
-# Keep the dual-kernel overlay as the final Win7 runtime/build transformation.
+# Keep the dual-kernel overlay as the final kernel/runtime transformation, then
+# add diagnostics against that final launcher shape so the patch is deterministic.
 Invoke-DualKernelPatch
+Invoke-DiagnosticsPatch

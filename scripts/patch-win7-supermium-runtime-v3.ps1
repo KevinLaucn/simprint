@@ -10,6 +10,12 @@ function Invoke-DualKernelPatch {
   if (-not (Test-Path $dualKernelPatch)) {
     throw "Win7 dual-kernel patch script was not found: $dualKernelPatch"
   }
+
+  # Git for Windows may check PowerShell scripts out as CRLF. The dual-kernel
+  # overlay normalizes its TS/Rust targets to LF before matching them, so its
+  # own multi-line here-strings must be parsed from LF source as well.
+  $dualKernelText = [IO.File]::ReadAllText($dualKernelPatch).Replace("`r`n", "`n")
+  [IO.File]::WriteAllText($dualKernelPatch, $dualKernelText, $utf8NoBom)
   & $dualKernelPatch
 }
 

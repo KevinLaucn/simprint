@@ -73,7 +73,7 @@ if (-not $applicationRoot) {
 $chromiumExe = Join-Path $applicationRoot 'chrome.exe'
 $productVersion = (Get-Item $chromiumExe).VersionInfo.ProductVersion
 if ([string]::IsNullOrWhiteSpace($productVersion) -or -not $productVersion.StartsWith($chromiumVersion)) {
-  throw "Unexpected Chromium version at $chromiumExe: $productVersion"
+  throw "Unexpected Chromium version at ${chromiumExe}: $productVersion"
 }
 
 Remove-Item $chromiumTarget -Recurse -Force -ErrorAction SilentlyContinue

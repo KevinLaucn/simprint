@@ -152,8 +152,8 @@ $launcher = Replace-RegexOnce $launcher `
   'Win7 Supermium fingerprint spawn signature'
 
 # Apply the stock-Chromium settings that do have stable command-line equivalents.
-# Scope the insertion to spawn_browser_process so proxy branches elsewhere in
-# launcher.rs cannot make this overlay ambiguous.
+# Scope the insertion to spawn_browser_process and anchor it on the unique
+# transition from proxy flags to extension preparation.
 $fingerprintArgsInsert = @'
     args.push("--no-first-run".to_string());
     args.push("--no-default-browser-check".to_string());
@@ -214,7 +214,7 @@ $fingerprintArgsInsert = @'
 $launcher = Insert-TextBeforeOnceInRange $launcher `
   'async fn spawn_browser_process(' `
   '    let mut command = tokio::process::Command::new(exe_path);' `
-  '    if let Some(proxy) = proxy {' `
+  '    let mut launch_extension_dirs = extension_dirs.cloned().unwrap_or_default();' `
   $fingerprintArgsInsert `
   'Win7 Supermium standard fingerprint args'
 

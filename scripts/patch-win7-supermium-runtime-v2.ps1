@@ -39,6 +39,43 @@ function Replace-TextOnce {
   return $Text.Substring(0, $first) + $New + $Text.Substring($first + $Old.Length)
 }
 
+function Insert-TextBeforeOnceInRange {
+  param(
+    [string]$Text,
+    [string]$StartMarker,
+    [string]$EndMarker,
+    [string]$Anchor,
+    [string]$Insert,
+    [string]$Label
+  )
+
+  $start = $Text.IndexOf($StartMarker, [System.StringComparison]::Ordinal)
+  if ($start -lt 0) {
+    throw "$Label start marker was not found"
+  }
+  $secondStart = $Text.IndexOf($StartMarker, $start + $StartMarker.Length, [System.StringComparison]::Ordinal)
+  if ($secondStart -ge 0) {
+    throw "$Label start marker was not unique"
+  }
+
+  $end = $Text.IndexOf($EndMarker, $start, [System.StringComparison]::Ordinal)
+  if ($end -lt 0) {
+    throw "$Label end marker was not found"
+  }
+
+  $anchorPos = $Text.IndexOf($Anchor, $start, [System.StringComparison]::Ordinal)
+  if ($anchorPos -lt 0 -or $anchorPos -ge $end) {
+    throw "$Label anchor was not found in range"
+  }
+
+  $secondAnchor = $Text.IndexOf($Anchor, $anchorPos + $Anchor.Length, [System.StringComparison]::Ordinal)
+  if ($secondAnchor -ge 0 -and $secondAnchor -lt $end) {
+    throw "$Label anchor was not unique in range"
+  }
+
+  return $Text.Substring(0, $anchorPos) + $Insert + $Text.Substring($anchorPos)
+}
+
 $rootDir = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path } else { $PWD }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
@@ -115,10 +152,9 @@ $launcher = Replace-RegexOnce $launcher `
   'Win7 Supermium fingerprint spawn signature'
 
 # Apply the stock-Chromium settings that do have stable command-line equivalents.
-$fingerprintArgsOld = @'
-    if let Some(proxy) = proxy {
-'@
-$fingerprintArgsNew = @'
+# Scope the insertion to spawn_browser_process so proxy branches elsewhere in
+# launcher.rs cannot make this overlay ambiguous.
+$fingerprintArgsInsert = @'
     args.push("--no-first-run".to_string());
     args.push("--no-default-browser-check".to_string());
     args.push("--password-store=basic".to_string());
@@ -174,9 +210,13 @@ $fingerprintArgsNew = @'
             }
         }
     }
-    if let Some(proxy) = proxy {
 '@
-$launcher = Replace-TextOnce $launcher $fingerprintArgsOld $fingerprintArgsNew 'Win7 Supermium standard fingerprint args'
+$launcher = Insert-TextBeforeOnceInRange $launcher `
+  'async fn spawn_browser_process(' `
+  '    let mut command = tokio::process::Command::new(exe_path);' `
+  '    if let Some(proxy) = proxy {' `
+  $fingerprintArgsInsert `
+  'Win7 Supermium standard fingerprint args'
 
 # Manifest V3 normal extensions cannot request webRequestBlocking. The supported
 # auth path uses webRequestAuthProvider + asyncBlocking.

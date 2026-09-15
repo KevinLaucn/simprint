@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
@@ -13,18 +13,25 @@ use tokio_socks::tcp::Socks5Stream;
 use crate::core::error::Result;
 use crate::services::environment::ProxyConfig;
 
-const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone)]
-struct AuthenticatedSocks5Proxy {
+struct Socks5Upstream {
     host: String,
     port: u16,
-    username: String,
-    password: String,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 struct ProxyBridgeHandle {
     task: JoinHandle<()>,
+}
+
+struct ResolvedHttpTarget {
+    target: TargetAddr<'static>,
+    origin_form: String,
+    authority: String,
 }
 
 static PROXY_BRIDGES: Lazy<Mutex<HashMap<String, ProxyBridgeHandle>>> =
@@ -44,85 +51,69 @@ pub async fn prepare_browser_proxy(
         return Ok(Some(proxy));
     }
 
-    let username = proxy.username.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let username = proxy
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let password = proxy
         .password
         .as_ref()
         .map(|value| value.value.as_str())
         .filter(|value| !value.is_empty());
 
-    match (username, password) {
-        (None, None) => {
-            stop_proxy_bridge(env_uuid).await;
-            Ok(Some(proxy))
-        }
-        (Some(_), None) | (None, Some(_)) => Err(
+    if username.is_some() != password.is_some() {
+        return Err(
             "SOCKS5 代理认证信息不完整：用户名和密码必须同时填写；已阻止错误代理启动".into(),
-        ),
-        (Some(username), Some(password)) => {
-            let upstream = AuthenticatedSocks5Proxy {
-                host: normalize_connect_host(&proxy.host),
-                port: proxy.port,
-                username: username.to_string(),
-                password: password.to_string(),
-            };
-
-            preflight_upstream(&upstream).await?;
-            let local_port = start_proxy_bridge(env_uuid, upstream).await?;
-
-            log::info!(
-                "SOCKS5 authenticated proxy bridge ready for env_uuid={} on 127.0.0.1:{}",
-                env_uuid,
-                local_port
-            );
-
-            Ok(Some(ProxyConfig {
-                host: "127.0.0.1".to_string(),
-                port: local_port,
-                proxy_type: "socks5".to_string(),
-                username: None,
-                password: None,
-            }))
-        }
+        );
     }
+
+    let upstream = Socks5Upstream {
+        host: normalize_connect_host(&proxy.host),
+        port: proxy.port,
+        username: username.map(ToOwned::to_owned),
+        password: password.map(ToOwned::to_owned),
+    };
+    let local_port = start_proxy_bridge(env_uuid, upstream.clone()).await?;
+
+    // Chromium/Supermium only talks to a simple localhost HTTP proxy. The
+    // bridge owns SOCKS5 negotiation, authentication and remote DNS. This is
+    // the same browser-facing shape as the proven Mihomo local-proxy path and
+    // avoids Chromium's SOCKS implementation/auth limitations on Win7.
+    log::info!(
+        "SOCKS5 -> HTTP proxy bridge ready for env_uuid={} on 127.0.0.1:{} upstream={}:{} auth={}",
+        env_uuid,
+        local_port,
+        upstream.host,
+        upstream.port,
+        upstream.username.is_some()
+    );
+
+    Ok(Some(ProxyConfig {
+        host: "127.0.0.1".to_string(),
+        port: local_port,
+        proxy_type: "http".to_string(),
+        username: None,
+        password: None,
+    }))
 }
 
 pub async fn stop_proxy_bridge(env_uuid: &str) {
     if let Some(handle) = PROXY_BRIDGES.lock().await.remove(env_uuid) {
         handle.task.abort();
-        log::debug!("Stopped SOCKS5 proxy bridge for env_uuid={}", env_uuid);
+        log::debug!("Stopped SOCKS5/HTTP proxy bridge for env_uuid={}", env_uuid);
     }
 }
 
-async fn preflight_upstream(proxy: &AuthenticatedSocks5Proxy) -> Result<()> {
-    let connect = TcpStream::connect((proxy.host.as_str(), proxy.port));
-    match tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, connect).await {
-        Ok(Ok(stream)) => {
-            drop(stream);
-            Ok(())
-        }
-        Ok(Err(error)) => Err(format!(
-            "SOCKS5 代理服务器无法从本机访问 {}:{}: {}。如果这是 IPv6 代理，请确认 Win7 主机具备可用 IPv6 路由。",
-            proxy.host, proxy.port, error
-        )
-        .into()),
-        Err(_) => Err(format!(
-            "SOCKS5 代理服务器连接超时 {}:{}。已阻止启动，避免浏览器只显示 ERR_SOCKS_CONNECTION_FAILED。",
-            proxy.host, proxy.port
-        )
-        .into()),
-    }
-}
-
-async fn start_proxy_bridge(env_uuid: &str, upstream: AuthenticatedSocks5Proxy) -> Result<u16> {
+async fn start_proxy_bridge(env_uuid: &str, upstream: Socks5Upstream) -> Result<u16> {
     stop_proxy_bridge(env_uuid).await;
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
-        .map_err(|error| format!("无法创建本地 SOCKS5 认证桥: {error}"))?;
+        .map_err(|error| format!("无法创建本地 SOCKS5/HTTP 代理桥: {error}"))?;
     let local_port = listener
         .local_addr()
-        .map_err(|error| format!("无法读取本地 SOCKS5 认证桥端口: {error}"))?
+        .map_err(|error| format!("无法读取本地 SOCKS5/HTTP 代理桥端口: {error}"))?
         .port();
     let env_id = env_uuid.to_string();
 
@@ -136,9 +127,9 @@ async fn start_proxy_bridge(env_uuid: &str, upstream: AuthenticatedSocks5Proxy) 
                             let connection_upstream = upstream.clone();
                             let connection_env_id = env_id.clone();
                             connections.spawn(async move {
-                                if let Err(error) = handle_client(stream, connection_upstream).await {
+                                if let Err(error) = handle_http_proxy_client(stream, connection_upstream).await {
                                     log::warn!(
-                                        "SOCKS5 proxy bridge connection failed for env_uuid={}: {}",
+                                        "SOCKS5/HTTP proxy bridge connection failed for env_uuid={}: {}",
                                         connection_env_id,
                                         error
                                     );
@@ -147,7 +138,7 @@ async fn start_proxy_bridge(env_uuid: &str, upstream: AuthenticatedSocks5Proxy) 
                         }
                         Err(error) => {
                             log::warn!(
-                                "SOCKS5 proxy bridge listener stopped for env_uuid={}: {}",
+                                "SOCKS5/HTTP proxy bridge listener stopped for env_uuid={}: {}",
                                 env_id,
                                 error
                             );
@@ -158,7 +149,7 @@ async fn start_proxy_bridge(env_uuid: &str, upstream: AuthenticatedSocks5Proxy) 
                 completed = connections.join_next(), if !connections.is_empty() => {
                     if let Some(Err(error)) = completed {
                         log::warn!(
-                            "SOCKS5 proxy bridge task failed for env_uuid={}: {}",
+                            "SOCKS5/HTTP proxy bridge task failed for env_uuid={}: {}",
                             env_id,
                             error
                         );
@@ -176,148 +167,332 @@ async fn start_proxy_bridge(env_uuid: &str, upstream: AuthenticatedSocks5Proxy) 
     Ok(local_port)
 }
 
-async fn handle_client(
+async fn handle_http_proxy_client(
     mut client: TcpStream,
-    upstream: AuthenticatedSocks5Proxy,
+    upstream: Socks5Upstream,
 ) -> std::result::Result<(), String> {
-    negotiate_no_auth(&mut client).await?;
-    let target = read_connect_target(&mut client).await?;
+    let (request, header_end) = read_http_request_head(&mut client).await?;
+    let buffered_body = request[header_end..].to_vec();
+    let header_text = String::from_utf8_lossy(&request[..header_end - 4]).into_owned();
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| "HTTP 代理请求缺少请求行".to_string())?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| "HTTP 代理请求缺少方法".to_string())?;
+    let request_target = request_parts
+        .next()
+        .ok_or_else(|| "HTTP 代理请求缺少目标".to_string())?;
+    let version = request_parts
+        .next()
+        .ok_or_else(|| "HTTP 代理请求缺少协议版本".to_string())?;
+    if request_parts.next().is_some() {
+        let _ = write_http_error(&mut client, 400, "Bad Request").await;
+        return Err("HTTP 代理请求行格式无效".to_string());
+    }
 
-    let mut remote = match tokio::time::timeout(
-        UPSTREAM_CONNECT_TIMEOUT,
-        Socks5Stream::connect_with_password(
-            (upstream.host.as_str(), upstream.port),
-            target,
-            &upstream.username,
-            &upstream.password,
-        ),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(error)) => {
-            let _ = send_reply(&mut client, 0x01).await;
-            return Err(format!("上游 SOCKS5 认证/连接失败: {error}"));
+    let headers = lines.map(ToOwned::to_owned).collect::<Vec<_>>();
+
+    if method.eq_ignore_ascii_case("CONNECT") {
+        let (host, port) = parse_authority(request_target, 443)?;
+        let target = to_target_addr(&host, port);
+        let mut remote = match connect_upstream(&upstream, target).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                let _ = write_http_error(&mut client, 502, "Bad Gateway").await;
+                return Err(error);
+            }
+        };
+
+        client
+            .write_all(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: Simprint\r\n\r\n")
+            .await
+            .map_err(|error| format!("写入 HTTP CONNECT 响应失败: {error}"))?;
+        if !buffered_body.is_empty() {
+            remote
+                .write_all(&buffered_body)
+                .await
+                .map_err(|error| format!("转发 CONNECT 预读数据失败: {error}"))?;
         }
-        Err(_) => {
-            let _ = send_reply(&mut client, 0x04).await;
-            return Err("上游 SOCKS5 连接超时".to_string());
+        tokio::io::copy_bidirectional(&mut client, &mut remote)
+            .await
+            .map_err(|error| format!("SOCKS5/HTTP CONNECT 双向转发失败: {error}"))?;
+        return Ok(());
+    }
+
+    let resolved = resolve_http_target(request_target, &headers)?;
+    let mut remote = match connect_upstream(&upstream, resolved.target).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = write_http_error(&mut client, 502, "Bad Gateway").await;
+            return Err(error);
         }
     };
 
-    send_reply(&mut client, 0x00).await?;
+    let rewritten = rewrite_http_request(
+        method,
+        &resolved.origin_form,
+        version,
+        &headers,
+        &resolved.authority,
+    );
+    remote
+        .write_all(rewritten.as_bytes())
+        .await
+        .map_err(|error| format!("转发 HTTP 代理请求头失败: {error}"))?;
+    if !buffered_body.is_empty() {
+        remote
+            .write_all(&buffered_body)
+            .await
+            .map_err(|error| format!("转发 HTTP 代理请求体失败: {error}"))?;
+    }
+
     tokio::io::copy_bidirectional(&mut client, &mut remote)
         .await
-        .map_err(|error| format!("SOCKS5 双向转发失败: {error}"))?;
+        .map_err(|error| format!("SOCKS5/HTTP 双向转发失败: {error}"))?;
     Ok(())
 }
 
-async fn negotiate_no_auth(client: &mut TcpStream) -> std::result::Result<(), String> {
-    let mut header = [0_u8; 2];
-    client
-        .read_exact(&mut header)
-        .await
-        .map_err(|error| format!("读取 SOCKS5 握手失败: {error}"))?;
-    if header[0] != 0x05 {
-        return Err(format!("不支持的 SOCKS 版本: {}", header[0]));
-    }
-
-    let mut methods = vec![0_u8; header[1] as usize];
-    client
-        .read_exact(&mut methods)
-        .await
-        .map_err(|error| format!("读取 SOCKS5 认证方式失败: {error}"))?;
-    if !methods.contains(&0x00) {
-        let _ = client.write_all(&[0x05, 0xff]).await;
-        return Err("浏览器没有提供 SOCKS5 no-auth 握手方式".to_string());
-    }
-
-    client
-        .write_all(&[0x05, 0x00])
-        .await
-        .map_err(|error| format!("写入 SOCKS5 握手响应失败: {error}"))?;
-    Ok(())
-}
-
-async fn read_connect_target(
+async fn read_http_request_head(
     client: &mut TcpStream,
-) -> std::result::Result<TargetAddr<'static>, String> {
-    let mut header = [0_u8; 4];
-    client
-        .read_exact(&mut header)
-        .await
-        .map_err(|error| format!("读取 SOCKS5 CONNECT 请求失败: {error}"))?;
+) -> std::result::Result<(Vec<u8>, usize), String> {
+    let mut buffer = Vec::with_capacity(4096);
+    let mut chunk = [0_u8; 4096];
 
-    if header[0] != 0x05 {
-        return Err(format!("不支持的 SOCKS 版本: {}", header[0]));
-    }
-    if header[1] != 0x01 {
-        let _ = send_reply(client, 0x07).await;
-        return Err(format!("仅支持 SOCKS5 CONNECT，收到命令 {}", header[1]));
-    }
-
-    match header[3] {
-        0x01 => {
-            let mut address = [0_u8; 4];
-            client
-                .read_exact(&mut address)
-                .await
-                .map_err(|error| format!("读取 SOCKS5 IPv4 目标失败: {error}"))?;
-            let port = read_port(client).await?;
-            Ok(TargetAddr::Ip(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::from(address)),
-                port,
-            )))
+    loop {
+        let read = client
+            .read(&mut chunk)
+            .await
+            .map_err(|error| format!("读取 HTTP 代理请求失败: {error}"))?;
+        if read == 0 {
+            return Err("HTTP 代理连接在请求头完成前关闭".to_string());
         }
-        0x03 => {
-            let mut length = [0_u8; 1];
-            client
-                .read_exact(&mut length)
-                .await
-                .map_err(|error| format!("读取 SOCKS5 域名长度失败: {error}"))?;
-            let mut domain = vec![0_u8; length[0] as usize];
-            client
-                .read_exact(&mut domain)
-                .await
-                .map_err(|error| format!("读取 SOCKS5 域名失败: {error}"))?;
-            let domain = String::from_utf8(domain)
-                .map_err(|_| "SOCKS5 目标域名不是有效 UTF-8".to_string())?;
-            let port = read_port(client).await?;
-            Ok(TargetAddr::Domain(domain.into(), port))
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(end) = find_header_end(&buffer) {
+            return Ok((buffer, end));
         }
-        0x04 => {
-            let mut address = [0_u8; 16];
-            client
-                .read_exact(&mut address)
-                .await
-                .map_err(|error| format!("读取 SOCKS5 IPv6 目标失败: {error}"))?;
-            let port = read_port(client).await?;
-            Ok(TargetAddr::Ip(SocketAddr::new(
-                IpAddr::V6(Ipv6Addr::from(address)),
-                port,
-            )))
-        }
-        address_type => {
-            let _ = send_reply(client, 0x08).await;
-            Err(format!("不支持的 SOCKS5 地址类型: {address_type}"))
+        if buffer.len() > MAX_HTTP_HEADER_BYTES {
+            return Err(format!(
+                "HTTP 代理请求头超过 {} 字节限制",
+                MAX_HTTP_HEADER_BYTES
+            ));
         }
     }
 }
 
-async fn read_port(client: &mut TcpStream) -> std::result::Result<u16, String> {
-    let mut port = [0_u8; 2];
-    client
-        .read_exact(&mut port)
-        .await
-        .map_err(|error| format!("读取 SOCKS5 目标端口失败: {error}"))?;
-    Ok(u16::from_be_bytes(port))
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
 }
 
-async fn send_reply(client: &mut TcpStream, reply: u8) -> std::result::Result<(), String> {
-    client
-        .write_all(&[0x05, reply, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+fn resolve_http_target(
+    request_target: &str,
+    headers: &[String],
+) -> std::result::Result<ResolvedHttpTarget, String> {
+    if let Some(rest) = strip_prefix_ascii_case(request_target, "http://") {
+        let (authority, origin_form) = split_absolute_http_target(rest)?;
+        let (host, port) = parse_authority(&authority, 80)?;
+        return Ok(ResolvedHttpTarget {
+            target: to_target_addr(&host, port),
+            origin_form,
+            authority,
+        });
+    }
+
+    if strip_prefix_ascii_case(request_target, "https://").is_some() {
+        return Err("HTTPS 代理请求必须使用 CONNECT".to_string());
+    }
+
+    let authority = find_header_value(headers, "host")
+        .ok_or_else(|| "HTTP 代理请求缺少 Host 头".to_string())?
+        .to_string();
+    let (host, port) = parse_authority(&authority, 80)?;
+    Ok(ResolvedHttpTarget {
+        target: to_target_addr(&host, port),
+        origin_form: request_target.to_string(),
+        authority,
+    })
+}
+
+fn split_absolute_http_target(rest: &str) -> std::result::Result<(String, String), String> {
+    let boundary = rest.find(|character| character == '/' || character == '?');
+    let (authority, origin_form) = match boundary {
+        Some(index) => {
+            let authority = &rest[..index];
+            let suffix = &rest[index..];
+            let origin = if suffix.starts_with('?') {
+                format!("/{suffix}")
+            } else {
+                suffix.to_string()
+            };
+            (authority, origin)
+        }
+        None => (rest, "/".to_string()),
+    };
+
+    if authority.trim().is_empty() {
+        return Err("HTTP 代理绝对 URL 缺少主机".to_string());
+    }
+    Ok((authority.to_string(), origin_form))
+}
+
+fn find_header_value<'a>(headers: &'a [String], name: &str) -> Option<&'a str> {
+    headers.iter().find_map(|header| {
+        let (header_name, value) = header.split_once(':')?;
+        header_name.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
+fn rewrite_http_request(
+    method: &str,
+    origin_form: &str,
+    version: &str,
+    headers: &[String],
+    authority: &str,
+) -> String {
+    let mut output = format!("{method} {origin_form} {version}\r\n");
+    let mut has_host = false;
+
+    for header in headers {
+        let Some((name, _)) = header.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("proxy-connection")
+            || name.eq_ignore_ascii_case("proxy-authorization")
+        {
+            continue;
+        }
+        if name.eq_ignore_ascii_case("host") {
+            has_host = true;
+        }
+        output.push_str(header);
+        output.push_str("\r\n");
+    }
+
+    if !has_host {
+        output.push_str("Host: ");
+        output.push_str(authority);
+        output.push_str("\r\n");
+    }
+    output.push_str("\r\n");
+    output
+}
+
+fn parse_authority(authority: &str, default_port: u16) -> std::result::Result<(String, u16), String> {
+    let value = authority.trim();
+    if value.is_empty() {
+        return Err("代理目标地址为空".to_string());
+    }
+
+    if let Some(rest) = value.strip_prefix('[') {
+        let closing = rest
+            .find(']')
+            .ok_or_else(|| format!("IPv6 代理目标缺少 ]: {value}"))?;
+        let host = &rest[..closing];
+        let suffix = &rest[closing + 1..];
+        let port = if suffix.is_empty() {
+            default_port
+        } else {
+            let raw_port = suffix
+                .strip_prefix(':')
+                .ok_or_else(|| format!("IPv6 代理目标端口格式无效: {value}"))?;
+            parse_port(raw_port, value)?
+        };
+        return Ok((host.to_string(), port));
+    }
+
+    if value.parse::<IpAddr>().is_ok() {
+        return Ok((value.to_string(), default_port));
+    }
+
+    if let Some((host, raw_port)) = value.rsplit_once(':') {
+        if !host.is_empty() && !raw_port.is_empty() && raw_port.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Ok((host.to_string(), parse_port(raw_port, value)?));
+        }
+    }
+
+    Ok((value.to_string(), default_port))
+}
+
+fn parse_port(raw_port: &str, authority: &str) -> std::result::Result<u16, String> {
+    raw_port
+        .parse::<u16>()
+        .map_err(|_| format!("代理目标端口无效: {authority}"))
+}
+
+fn to_target_addr(host: &str, port: u16) -> TargetAddr<'static> {
+    match host.parse::<IpAddr>() {
+        Ok(address) => TargetAddr::Ip(SocketAddr::new(address, port)),
+        Err(_) => TargetAddr::Domain(host.to_string().into(), port),
+    }
+}
+
+async fn connect_upstream(
+    upstream: &Socks5Upstream,
+    target: TargetAddr<'static>,
+) -> std::result::Result<Socks5Stream<TcpStream>, String> {
+    let proxy_addr = (upstream.host.as_str(), upstream.port);
+
+    if let (Some(username), Some(password)) = (&upstream.username, &upstream.password) {
+        match tokio::time::timeout(
+            UPSTREAM_CONNECT_TIMEOUT,
+            Socks5Stream::connect_with_password(proxy_addr, target, username, password),
+        )
         .await
-        .map_err(|error| format!("写入 SOCKS5 响应失败: {error}"))
+        {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(error)) => Err(format!(
+                "上游 SOCKS5 认证/连接失败 {}:{}: {error}",
+                upstream.host, upstream.port
+            )),
+            Err(_) => Err(format!(
+                "上游 SOCKS5 连接超时 {}:{}",
+                upstream.host, upstream.port
+            )),
+        }
+    } else {
+        match tokio::time::timeout(
+            UPSTREAM_CONNECT_TIMEOUT,
+            Socks5Stream::connect(proxy_addr, target),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(error)) => Err(format!(
+                "上游 SOCKS5 连接失败 {}:{}: {error}",
+                upstream.host, upstream.port
+            )),
+            Err(_) => Err(format!(
+                "上游 SOCKS5 连接超时 {}:{}",
+                upstream.host, upstream.port
+            )),
+        }
+    }
+}
+
+async fn write_http_error(
+    client: &mut TcpStream,
+    status: u16,
+    reason: &str,
+) -> std::result::Result<(), String> {
+    let body = format!("Simprint proxy bridge: {status} {reason}\n");
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    client
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|error| format!("写入 HTTP 代理错误响应失败: {error}"))
+}
+
+fn strip_prefix_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = value.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &value[prefix.len()..])
 }
 
 fn normalize_connect_host(host: &str) -> String {
@@ -326,4 +501,45 @@ fn normalize_connect_host(host: &str) -> String {
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(host)
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_authority, resolve_http_target, rewrite_http_request};
+
+    #[test]
+    fn parses_ipv6_authority_with_port() {
+        assert_eq!(
+            parse_authority("[2001:db8::1]:443", 80).unwrap(),
+            ("2001:db8::1".to_string(), 443)
+        );
+        assert_eq!(
+            parse_authority("2001:db8::1", 1080).unwrap(),
+            ("2001:db8::1".to_string(), 1080)
+        );
+    }
+
+    #[test]
+    fn resolves_absolute_http_proxy_target_without_local_dns() {
+        let headers = vec!["User-Agent: test".to_string()];
+        let resolved = resolve_http_target("http://example.com/path?q=1", &headers).unwrap();
+        assert_eq!(resolved.authority, "example.com");
+        assert_eq!(resolved.origin_form, "/path?q=1");
+    }
+
+    #[test]
+    fn strips_proxy_only_headers_when_forwarding_plain_http() {
+        let headers = vec![
+            "Host: example.com".to_string(),
+            "Proxy-Connection: keep-alive".to_string(),
+            "Proxy-Authorization: Basic secret".to_string(),
+            "Accept: */*".to_string(),
+        ];
+        let request = rewrite_http_request("GET", "/", "HTTP/1.1", &headers, "example.com");
+        assert!(request.starts_with("GET / HTTP/1.1\r\n"));
+        assert!(request.contains("Host: example.com\r\n"));
+        assert!(request.contains("Accept: */*\r\n"));
+        assert!(!request.contains("Proxy-Connection"));
+        assert!(!request.contains("Proxy-Authorization"));
+    }
 }

@@ -19,16 +19,31 @@ function Replace-TextOnce {
   return $Text.Substring(0, $first) + $New + $Text.Substring($first + $Old.Length)
 }
 
+function Replace-RegexOnce {
+  param(
+    [string]$Text,
+    [string]$Pattern,
+    [string]$Replacement,
+    [string]$Label
+  )
+
+  $regex = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  $matches = $regex.Matches($Text)
+  if ($matches.Count -ne 1) {
+    throw "$Label expected exactly one target, found $($matches.Count)"
+  }
+  return $regex.Replace($Text, $Replacement, 1)
+}
+
 $rootDir = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path } else { $PWD }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 # ---------------------------------------------------------------------------
 # Chromium 109 native Win7 runtime
 # ---------------------------------------------------------------------------
-# Keep this kernel completely separate from the Supermium resource. Chromium
-# 109 is the final Chromium generation that supports Windows 7. We pin the
-# original x64 Hibbiki build and verify its SHA256 before copying the installed
-# Application tree into the Tauri resources directory.
+# Keep this kernel completely separate from Supermium. Chromium 109 is the
+# final Chromium generation that supports Windows 7. Pin the original x64
+# Hibbiki package and verify it before bundling its complete Application tree.
 $chromiumVersion = '109.0.5414.120'
 $chromiumUrl = 'https://github.com/Hibbiki/chromium-win64/releases/download/v109.0.5414.120-r1070088/mini_installer.sync.exe'
 $chromiumSha256 = 'E03C54DDB2614E70CC0D8622BE3568ABB9C11D8330FDF851FA39FF545B2F9CFF'
@@ -84,9 +99,8 @@ if (-not (Test-Path (Join-Path $chromiumTarget 'chrome.exe'))) {
 }
 Write-Host "Bundled native Chromium $productVersion from $applicationRoot"
 
-# Add the Chromium directory to the generated Win7 Tauri config. This file was
-# prepared before the overlay step, so patching it here keeps non-Win7 configs
-# untouched.
+# Tauri config is generated before this overlay. Add Chromium 109 only to the
+# Win7 build output; upstream/default configs remain untouched.
 $tauriConfigPath = Join-Path $rootDir 'src-tauri/tauri.conf.json'
 $tauriConfig = Get-Content $tauriConfigPath -Raw | ConvertFrom-Json
 if ($null -eq $tauriConfig.bundle.resources) {
@@ -98,7 +112,7 @@ $tauriJson = $tauriConfig | ConvertTo-Json -Depth 100
 [IO.File]::WriteAllText($tauriConfigPath, $tauriJson + "`n", $utf8NoBom)
 
 # ---------------------------------------------------------------------------
-# Local kernel catalog: Win7 gets an explicit dual-kernel family.
+# Local kernel catalog: explicit Win7 dual-kernel family.
 # ---------------------------------------------------------------------------
 $catalogPath = Join-Path $rootDir 'src-tauri/crates/business/resources/default-browser-kernels.json'
 $catalog = Get-Content $catalogPath -Raw | ConvertFrom-Json
@@ -156,8 +170,8 @@ $catalogJson = $catalog | ConvertTo-Json -Depth 20
 [IO.File]::WriteAllText($catalogPath, $catalogJson + "`n", $utf8NoBom)
 
 # ---------------------------------------------------------------------------
-# Create-window UI: Win7 queries its own kernel family instead of relabeling
-# the normal Chromium 144 catalog as Supermium.
+# Create-window UI: query the Win7 kernel family instead of relabeling the
+# normal Chromium 144 list as Supermium.
 # ---------------------------------------------------------------------------
 $windowInfoPath = Join-Path $rootDir 'plugins/pages/create-window/src/components/window-info-form.tsx'
 $windowInfo = [IO.File]::ReadAllText($windowInfoPath).Replace("`r`n", "`n")
@@ -199,12 +213,13 @@ $windowInfo = Replace-TextOnce $windowInfo `
 [IO.File]::WriteAllText($windowInfoPath, $windowInfo, $utf8NoBom)
 
 # ---------------------------------------------------------------------------
-# Kernel preparation: keep Supermium and Chromium 109 physically and logically
-# separate. Legacy Win7 environments that were previously bound to Chrome 144
-# continue to map to Supermium so existing profiles are not broken.
+# Kernel preparation: keep Supermium and Chromium 109 physically separate.
+# The source around this block is also transformed by before-build-win7.ps1,
+# so use structural regex matching rather than brittle byte-for-byte matching.
 # ---------------------------------------------------------------------------
 $kernelServicePath = Join-Path $rootDir 'src-tauri/src/services/environment/kernel/mod.rs'
 $kernelService = [IO.File]::ReadAllText($kernelServicePath).Replace("`r`n", "`n")
+
 if (-not $kernelService.Contains('async fn ensure_chromium109_bundled(')) {
   $chromiumResolver = @'
 
@@ -256,38 +271,14 @@ async fn ensure_chromium109_bundled(
     Err(format!("安装包中的 Chromium 109 内核不完整: {}", bundled_dir.display()).into())
 }
 '@
-  $kernelService = Replace-TextOnce $kernelService `
-    "`nasync fn record_ready_installation" `
+  $kernelService = Replace-RegexOnce $kernelService `
+    '\nasync fn record_ready_installation' `
     ($chromiumResolver + "`nasync fn record_ready_installation") `
     'Win7 Chromium 109 bundled resolver'
 }
 
-$oldWin7Prepare = @'
-        #[cfg(feature = "win7-offline")]
-        {
-            let exe_path = ensure_supermium_bundled(
-                &app,
-                &env_uuid,
-                &install_dir_name,
-                &profiles_path,
-                status_emitter.as_ref(),
-            )
-            .await?;
-            utils::emit_status(
-                status_emitter.as_ref(),
-                &env_uuid,
-                &install_dir_name,
-                EnvironmentStatus::Ready,
-                Some("Supermium 固定内核已就绪"),
-                None,
-                None,
-                None,
-            );
-            record_ready_installation(&app, &kernel_id, &exe_path, "supermium-win7-bundled").await;
-            return Ok(exe_path.to_string_lossy().to_string());
-        }
-'@
-$newWin7Prepare = @'
+if (-not $kernelService.Contains('chromium-109-win7-bundled')) {
+  $newWin7Prepare = @'
         #[cfg(feature = "win7-offline")]
         {
             let bundled = if install_dir_name.eq_ignore_ascii_case("Chromium 109") {
@@ -332,7 +323,10 @@ $newWin7Prepare = @'
             }
         }
 '@
-$kernelService = Replace-TextOnce $kernelService $oldWin7Prepare $newWin7Prepare 'Win7 independent dual-kernel preparation'
-[IO.File]::WriteAllText($kernelServicePath, $kernelService, $utf8NoBom)
 
+  $preparePattern = '#\[cfg\(feature = "win7-offline"\)\]\s*\{\s*let exe_path = ensure_supermium_bundled\(.*?return Ok\(exe_path\.to_string_lossy\(\)\.to_string\(\)\);\s*\}'
+  $kernelService = Replace-RegexOnce $kernelService $preparePattern $newWin7Prepare 'Win7 independent dual-kernel preparation'
+}
+
+[IO.File]::WriteAllText($kernelServicePath, $kernelService, $utf8NoBom)
 Write-Host 'Applied Win7 dual-kernel overlay: Supermium 144 + independent native Chromium 109.'

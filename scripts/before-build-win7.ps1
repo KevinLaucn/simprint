@@ -65,14 +65,25 @@ if ($mainFrameMatches.Count -ne 1) {
   throw "Win7 main-window compatibility patch expected one target, found $($mainFrameMatches.Count)"
 }
 $windowText = [regex]::Replace($windowText, $mainFramePattern, '$1.decorations(true)$2', 1)
-$mainWindowBuildTarget = @'
-                .build()?;
 
-        log::info!(
-            "Main window built in {:.1} ms",
-'@
-$mainWindowBuildReplacement = @'
-                .build()?;
+# Dynamically constructed Tauri windows do not reliably inherit the executable
+# icon on Win7. Scope the insertion to the unique main WebviewWindowBuilder
+# block so whitespace/formatting changes do not break the build overlay.
+$mainIconPattern = '(let _window\s*=\s*WebviewWindowBuilder::new\(app_handle,\s*"main",\s*WebviewUrl::App\("index\.html"\.into\(\)\)\).*?\.build\(\)\?;)(\s*log::info!\(\s*"Main window built in \{:\.1\} ms",)'
+$mainIconRegex = [regex]::new(
+  $mainIconPattern,
+  [System.Text.RegularExpressions.RegexOptions]::Singleline
+)
+$mainIconMatches = $mainIconRegex.Matches($windowText)
+if ($mainIconMatches.Count -ne 1) {
+  throw "Win7 explicit main-window icon patch expected one target, found $($mainIconMatches.Count)"
+}
+$windowText = $mainIconRegex.Replace(
+  $windowText,
+  [System.Text.RegularExpressions.MatchEvaluator]{
+    param($match)
+    $match.Groups[1].Value + @'
+
 
         // Win7 does not reliably inherit the bundle icon for dynamically built
         // webview windows. Set it explicitly so the title bar and taskbar use
@@ -80,14 +91,10 @@ $mainWindowBuildReplacement = @'
         if let Some(icon) = app_handle.default_window_icon() {
             _window.set_icon(icon.clone())?;
         }
-
-        log::info!(
-            "Main window built in {:.1} ms",
-'@
-$windowText = Replace-TextOnce $windowText `
-  $mainWindowBuildTarget `
-  $mainWindowBuildReplacement `
-  'Win7 explicit main-window icon'
+'@ + $match.Groups[2].Value
+  },
+  1
+)
 [IO.File]::WriteAllText($windowService, $windowText, $utf8NoBom)
 
 $appLayout = Join-Path $rootDir 'plugins/layouts/app-layout/src/index.tsx'

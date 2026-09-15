@@ -5,12 +5,21 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $launcherPath = Join-Path $rootDir 'src-tauri/crates/runtime/src/services/environment/kernel/launcher.rs'
 $launcher = [IO.File]::ReadAllText($launcherPath).Replace("`r`n", "`n")
 
+function Invoke-DualKernelPatch {
+  $dualKernelPatch = Join-Path $PSScriptRoot 'patch-win7-dual-kernel.ps1'
+  if (-not (Test-Path $dualKernelPatch)) {
+    throw "Win7 dual-kernel patch script was not found: $dualKernelPatch"
+  }
+  & $dualKernelPatch
+}
+
 # User-defined startup parameters remain supported, but they must not be able to
 # override the flags that enforce profile isolation, CDP ownership, proxy routing,
 # extension loading, or Simprint environment identity.
 $guardMarker = 'Ignoring reserved Supermium startup flag: {}'
 if ($launcher.Contains($guardMarker)) {
   Write-Host 'Win7 Supermium runtime v3 isolation guard already applied.'
+  Invoke-DualKernelPatch
   exit 0
 }
 
@@ -66,3 +75,5 @@ if (-not $launcher.Contains($guardMarker)) {
 
 [IO.File]::WriteAllText($launcherPath, $launcher, $utf8NoBom)
 Write-Host 'Applied Win7 Supermium runtime v3 isolation guard for custom startup flags.'
+
+Invoke-DualKernelPatch

@@ -98,7 +98,11 @@ pub async fn close_environment_rpa_tab(
 
 #[tauri::command]
 pub async fn stop_environment(env_uuid: String) -> Result<()> {
-    KernelService::stop_environment(env_uuid).await
+    let result = KernelService::stop_environment(env_uuid.clone()).await;
+    if result.is_ok() {
+        EnvironmentLaunchRuntimeService::stop_proxy_bridge(&env_uuid).await;
+    }
+    result
 }
 
 #[tauri::command]
@@ -157,7 +161,13 @@ pub async fn batch_start_environments_by_uuid(
 
 #[tauri::command]
 pub async fn batch_stop_environments(env_uuids: Vec<String>) -> Result<Vec<BatchLaunchResult>> {
-    KernelService::batch_stop_environments(env_uuids).await
+    let results = KernelService::batch_stop_environments(env_uuids).await?;
+    for result in &results {
+        if result.success {
+            EnvironmentLaunchRuntimeService::stop_proxy_bridge(&result.env_uuid).await;
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]
